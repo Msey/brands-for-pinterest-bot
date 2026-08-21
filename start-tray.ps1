@@ -19,6 +19,8 @@ $Root = $PSScriptRoot
 Set-Location -LiteralPath $Root
 
 $AppTitle = "Бот kupim_v_usa"
+$RecentLimit = 20
+$BalloonMs = 15000
 $MaxFileBytes = 8MB
 $MaxDisplayLen = 500
 $BotJs = Join-Path $Root "bot.js"
@@ -32,7 +34,13 @@ $script:consoleNotes = New-Object System.Collections.ArrayList
 $script:postLinesCache = @()
 $script:postsStamp = $null
 $script:postsCount = 0
+$script:knownCount = 0
 $script:timer = $null
+$script:watcher = $null
+$script:watchDebounce = $null
+
+. (Join-Path $Root "install-desktop-shortcut.ps1")
+Install-KupimDesktopShortcut -Root $Root
 
 $mutex = New-Object System.Threading.Mutex($false, "Local\TelegramKupimBotTray")
 if (-not $mutex.WaitOne(0, $false)) {
@@ -181,6 +189,51 @@ function Get-PostLines {
 function Get-SavedCount {
   if ($null -eq $script:postsCount) { Get-PostLines | Out-Null }
   return $script:postsCount
+}
+
+function Get-LastSavedUrl {
+  $lines = @(Get-PostLines)
+  if ($lines.Count -eq 0) { return $null }
+  $last = [string]$lines[-1]
+  if ($last -match '"url"\s*:\s*"([^"]+)"') {
+    return $Matches[1]
+  }
+  return $null
+}
+
+function Show-NewLinkBalloon {
+  param([int]$Added = 1)
+  if (-not $script:notify) { return }
+  $url = Get-LastSavedUrl
+  if ($Added -le 1 -and $url) {
+    $text = "Сохранено: $url`nНажмите, чтобы открыть папку с базой."
+  }
+  else {
+    $text = "Сохранено ссылок: $Added`nНажмите, чтобы открыть папку с базой."
+  }
+  if ($text.Length -gt 250) {
+    $text = $text.Substring(0, 247) + "..."
+  }
+  $script:notify.ShowBalloonTip(
+    $BalloonMs,
+    $AppTitle,
+    $text,
+    [System.Windows.Forms.ToolTipIcon]::Info
+  )
+}
+
+function Check-NewPosts {
+  $previous = $script:knownCount
+  Get-PostLines | Out-Null
+  $count = Get-SavedCount
+  $added = 0
+  if ($count -ge 0 -and $previous -ge 0 -and $count -gt $previous) {
+    $added = $count - $previous
+  }
+  $script:knownCount = $count
+  if ($added -gt 0 -and -not $script:restarting) {
+    Show-NewLinkBalloon $added
+  }
 }
 
 function Get-RecentPosts {
@@ -427,6 +480,36 @@ Add-TrayMenuItem $menu "Перезапустить" { Restart-Bot }
 Add-TrayMenuItem $menu "Выход" { Exit-App }
 $script:notify.ContextMenu = $menu
 $script:notify.Add_DoubleClick({ Show-MainWindow }) | Out-Null
+$script:notify.Add_BalloonTipClicked({ Open-DataFolder }) | Out-Null
+
+Get-PostLines | Out-Null
+$script:knownCount = Get-SavedCount
+
+$dataDir = Split-Path -Parent $PostsFile
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$null = $script:form.Handle
+
+$script:watchDebounce = New-Object System.Windows.Forms.Timer
+$script:watchDebounce.Interval = 400
+$script:watchDebounce.Add_Tick({
+  $script:watchDebounce.Stop()
+  Check-NewPosts
+  Update-WindowStatus
+}) | Out-Null
+
+$script:watcher = New-Object System.IO.FileSystemWatcher
+$script:watcher.Path = $dataDir
+$script:watcher.Filter = "posts.jsonl"
+$script:watcher.IncludeSubdirectories = $false
+$script:watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size -bor [System.IO.NotifyFilters]::FileName
+$script:watcher.SynchronizingObject = $script:form
+$watchHandler = {
+  $script:watchDebounce.Stop()
+  $script:watchDebounce.Start()
+}
+$script:watcher.add_Changed($watchHandler)
+$script:watcher.add_Created($watchHandler)
+$script:watcher.EnableRaisingEvents = $true
 
 $script:timer = New-Object System.Windows.Forms.Timer
 $script:timer.Interval = 3000
@@ -444,6 +527,7 @@ $script:timer.Add_Tick({
       )
     }
   }
+  Check-NewPosts
   Update-WindowStatus
 }) | Out-Null
 $script:timer.Start()
@@ -460,6 +544,14 @@ try {
   [System.Windows.Forms.Application]::Run($appContext)
 }
 finally {
+  if ($script:watchDebounce) {
+    $script:watchDebounce.Stop()
+    $script:watchDebounce.Dispose()
+  }
+  if ($script:watcher) {
+    $script:watcher.EnableRaisingEvents = $false
+    $script:watcher.Dispose()
+  }
   if ($script:timer) {
     $script:timer.Stop()
     $script:timer.Dispose()
