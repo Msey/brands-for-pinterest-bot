@@ -9,37 +9,101 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const LIST_LIMIT = 10;
 const TG_MAX_LEN = 4000;
+const RATE_WINDOW_MS = 60 * 1000;
+const RATE_MAX = 30;
 
 const storage = new PostStorage(path.join(__dirname, "data", "posts.jsonl"));
+const rateHits = new Map();
 
 function isPrivateChat(msg) {
-  return Boolean(msg && msg.chat && msg.chat.type === "private");
+  return Boolean(msg && msg.chat && msg.chat.type === "private" && Number.isFinite(msg.chat.id));
 }
 
 function isCommandText(text) {
   return typeof text === "string" && text.startsWith("/");
 }
 
+function parseAllowList(raw) {
+  if (!raw || !String(raw).trim()) return null;
+  const ids = String(raw)
+    .split(/[\s,]+/)
+    .map((part) => Number(part))
+    .filter((id) => Number.isInteger(id) && id > 0 && Number.isSafeInteger(id));
+  return ids.length ? new Set(ids) : null;
+}
+
+function isAllowedUser(msg) {
+  const allow = parseAllowList(process.env.BOT_ALLOW_USER_IDS);
+  if (!allow) return true;
+  const id = msg && msg.from && msg.from.id;
+  return allow.has(id);
+}
+
+function tooManyRequests(userId) {
+  if (!userId) return true;
+  const now = Date.now();
+  if (rateHits.size > 2000) {
+    for (const [key, slot] of rateHits) {
+      if (now > slot.reset) rateHits.delete(key);
+    }
+  }
+  let slot = rateHits.get(userId);
+  if (!slot || now > slot.reset) {
+    slot = { count: 0, reset: now + RATE_WINDOW_MS };
+    rateHits.set(userId, slot);
+  }
+  slot.count += 1;
+  return slot.count > RATE_MAX;
+}
+
+function isValidBotToken(token) {
+  return /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(token);
+}
+
+function commandPattern(name) {
+  const safe = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^/${safe}(?:@\\w+)?(?:\\s|$)`, "i");
+}
+
 async function reply(bot, chatId, text) {
-  if (chatId == null || !text) return;
+  if (!Number.isFinite(chatId) || !text) return;
+  const payload = {
+    disable_web_page_preview: true,
+  };
   for (let i = 0; i < text.length; i += TG_MAX_LEN) {
-    await bot.sendMessage(chatId, text.slice(i, i + TG_MAX_LEN));
+    await bot.sendMessage(chatId, text.slice(i, i + TG_MAX_LEN), payload);
   }
 }
 
 function onPrivate(bot, handler) {
   return async (msg) => {
     if (!isPrivateChat(msg)) return;
+    if (!isAllowedUser(msg)) {
+      try {
+        await reply(bot, msg.chat.id, "Нет доступа.");
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+    if (tooManyRequests(msg.from && msg.from.id)) {
+      try {
+        await reply(bot, msg.chat.id, "Слишком много запросов. Подождите минуту.");
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
     try {
       await handler(msg);
     } catch (err) {
-      console.error(err);
+      console.error(err && err.code === "STORAGE_FULL" ? "storage full" : err);
       try {
-        await reply(
-          bot,
-          msg.chat.id,
-          "Не получилось обработать сообщение. Проверьте диск и попробуйте ещё раз."
-        );
+        const text =
+          err && err.code === "STORAGE_FULL"
+            ? "Файл базы слишком большой, новые ссылки пока не сохраняю."
+            : "Не получилось обработать сообщение. Проверьте диск и попробуйте ещё раз.";
+        await reply(bot, msg.chat.id, text);
       } catch (sendErr) {
         console.error(sendErr);
       }
@@ -47,14 +111,10 @@ function onPrivate(bot, handler) {
   };
 }
 
-function commandPattern(name) {
-  return new RegExp(`^/${name}(?:@\\w+)?(?:\\s|$)`, "i");
-}
-
 function main() {
   const token = (process.env.BOT_TOKEN || "").trim();
-  if (!token) {
-    console.error("Нет BOT_TOKEN. Скопируйте .env.example в .env и впишите токен.");
+  if (!isValidBotToken(token)) {
+    console.error("Нет корректного BOT_TOKEN. Скопируйте .env.example в .env и впишите токен.");
     process.exit(1);
   }
 

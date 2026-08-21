@@ -19,7 +19,8 @@ $Root = $PSScriptRoot
 Set-Location -LiteralPath $Root
 
 $AppTitle = "Бот kupim_v_usa"
-$RecentLimit = 20
+$MaxFileBytes = 8MB
+$MaxDisplayLen = 500
 $BotJs = Join-Path $Root "bot.js"
 $PostsFile = Join-Path $Root "data\posts.jsonl"
 $NodeFallback = "C:\Program Files\nodejs\node.exe"
@@ -30,6 +31,7 @@ $script:restarting = $false
 $script:consoleNotes = New-Object System.Collections.ArrayList
 $script:postLinesCache = @()
 $script:postsStamp = $null
+$script:postsCount = 0
 $script:timer = $null
 
 $mutex = New-Object System.Threading.Mutex($false, "Local\TelegramKupimBotTray")
@@ -130,22 +132,46 @@ function Get-BotStatus {
   return "Остановлен"
 }
 
+function Get-SafeDisplayLine([string]$line) {
+  if ([string]::IsNullOrEmpty($line)) { return "" }
+  $clean = [regex]::Replace($line, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '')
+  if ($clean.Length -gt $MaxDisplayLen) {
+    return $clean.Substring(0, $MaxDisplayLen) + "..."
+  }
+  return $clean
+}
+
 function Get-PostLines {
   if (-not (Test-Path -LiteralPath $PostsFile)) {
     $script:postLinesCache = @()
     $script:postsStamp = $null
+    $script:postsCount = 0
     return @()
   }
   try {
     $item = Get-Item -LiteralPath $PostsFile
+    if ($item.Length -gt $MaxFileBytes) {
+      $script:postsCount = -1
+      $script:postLinesCache = @()
+      $script:postsStamp = "oversize:" + $item.Length
+      return @()
+    }
     $stamp = $item.LastWriteTimeUtc.Ticks.ToString() + ":" + $item.Length
     if ($stamp -eq $script:postsStamp) {
       return $script:postLinesCache
     }
-    $lines = @(Get-Content -LiteralPath $PostsFile -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.Trim() })
-    $script:postLinesCache = $lines
+    $lines = @(Get-Content -LiteralPath $PostsFile -Encoding UTF8 -ErrorAction Stop |
+      Where-Object { $_.Trim() } |
+      ForEach-Object { Get-SafeDisplayLine $_ })
+    $script:postsCount = $lines.Count
+    if ($lines.Count -gt $RecentLimit) {
+      $script:postLinesCache = $lines[($lines.Count - $RecentLimit)..($lines.Count - 1)]
+    }
+    else {
+      $script:postLinesCache = $lines
+    }
     $script:postsStamp = $stamp
-    return $lines
+    return $script:postLinesCache
   }
   catch {
     return @($script:postLinesCache)
@@ -153,7 +179,8 @@ function Get-PostLines {
 }
 
 function Get-SavedCount {
-  return @(Get-PostLines).Count
+  if ($null -eq $script:postsCount) { Get-PostLines | Out-Null }
+  return $script:postsCount
 }
 
 function Get-RecentPosts {
@@ -209,7 +236,13 @@ function Update-LogList {
 function Update-WindowStatus {
   if (-not $script:statusLabel) { return }
   $script:statusLabel.Text = "Статус: $(Get-BotStatus)"
-  $script:countLabel.Text = "Сохранено ссылок: $(Get-SavedCount)"
+  $count = Get-SavedCount
+  if ($count -lt 0) {
+    $script:countLabel.Text = "Сохранено ссылок: файл слишком большой"
+  }
+  else {
+    $script:countLabel.Text = "Сохранено ссылок: $count"
+  }
   Update-LogList
 }
 
@@ -232,12 +265,18 @@ function Hide-MainWindow {
 function Open-DataFolder {
   $data = Split-Path -Parent $PostsFile
   New-Item -ItemType Directory -Force -Path $data | Out-Null
-  Start-Process explorer.exe -ArgumentList $data
+  $full = [System.IO.Path]::GetFullPath($data)
+  $rootFull = [System.IO.Path]::GetFullPath($Root)
+  $prefix = $rootFull.TrimEnd('\') + '\'
+  if (-not ($full.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))) {
+    return
+  }
+  Start-Process explorer.exe -ArgumentList $full
 }
 
 function Add-ConsoleNote([string]$text) {
   $time = Get-Date -Format "HH:mm:ss"
-  [void]$script:consoleNotes.Add("PS> [$time] $text")
+  [void]$script:consoleNotes.Add("PS> [$time] $(Get-SafeDisplayLine $text)")
   while ($script:consoleNotes.Count -gt 8) {
     $script:consoleNotes.RemoveAt(0)
   }
