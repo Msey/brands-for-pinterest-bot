@@ -1,0 +1,58 @@
+# Локальный бот для ссылок kupim_v_usa
+
+Бот [@brands_for_pinterest_bot](https://t.me/brands_for_pinterest_bot) работает на вашем ПК.
+В личке принимает ссылки на посты `t.me/kupim_v_usa` и дописывает их в файл `data/posts.jsonl`.
+
+Нужен [Node.js](https://nodejs.org/) 16 или новее (на этом компьютере он уже есть).
+
+## Установка
+
+В PowerShell:
+
+```powershell
+cd telegram-kupim-bot
+npm install
+copy .env.example .env
+```
+
+Откройте `.env` и впишите токен от [@BotFather](https://t.me/BotFather):
+
+```
+BOT_TOKEN=ваш_токен
+```
+
+Токен нельзя коммитить и нельзя никому пересылать. Если он засветился — в BotFather команда `/revoke`, затем новый токен в `.env`.
+
+## Запуск
+
+Двойной щелчок по `start.vbs` — бот уходит в трей (рядом с часами), окно не остаётся на экране и не закрывается после старта.
+
+Правый клик по иконке в трее:
+
+- **Статус** — работает или нет
+- **Папка с данными** — `data/posts.jsonl`
+- **Перезапустить**
+- **Выход** — остановить бота
+
+Из PowerShell то же самое:
+
+```powershell
+cd telegram-kupim-bot
+wscript .\start.vbs
+```
+
+Команды:
+
+- `/start` — как пользоваться
+- `/list` — последние 10 ссылок
+- `/count` — сколько записей
+
+## Где лежат данные
+
+Каждая строка в `data/posts.jsonl` — одна ссылка:
+
+```json
+{"url":"https://t.me/kupim_v_usa/123","post_id":123,"saved_at":"...","from_user_id":111,"from_username":"name"}
+```
+
+Файл можно открыть блокнотом. ПК выключили — бот молчит, файл остаётся.
