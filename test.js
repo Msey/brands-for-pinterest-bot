@@ -11,6 +11,8 @@ const {
   isValidPostId,
 } = require("./links");
 const { PostStorage, parseRecordLine } = require("./storage");
+const { collectPostIds, isJpeg, pinDir } = require("./export-pin");
+const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 
 assert.deepStrictEqual(extractPosts(""), []);
 assert.deepStrictEqual(extractPosts(null), []);
@@ -109,4 +111,47 @@ fs.appendFileSync(file, "not-json\n[]\n", "utf8");
 assert.strictEqual(storage.listRecent(10).length, 2);
 
 fs.rmSync(dir, { recursive: true, force: true });
+
+assert.strictEqual(isShopUrl("javascript:alert(1)"), false);
+assert.strictEqual(isShopUrl("https://t.me/zakaz_managers"), false);
+assert.strictEqual(isShopUrl("https://www.nike.com/t/air-max-ishod"), true);
+assert.strictEqual(extractPhotoUrl('<img src="https://cdn4.telesco.pe/file/avatar.jpg">'), null);
+
+const html47039 = `
+<div class="tgme_widget_message_photo_wrap" style="background-image:url('https://cdn4.telesco.pe/file/demo47039.jpg')"></div>
+<div class="tgme_widget_message_text js-message_text" dir="auto"><b>Nike</b> <i class="emoji"><b>🇺🇸</b></i><br><br><a href="https://www.nike.com/t/air-max-ishod-skate-shoes-hpCjEcyG/IR1887-001">Кроссовки высокие Air Max Ishod</a> унисекс<br><b><s>13800₽</s> ➡️ 11800₽ + доставка</b><br><br>ID: <code>723660</code><br>💌 Для заказа писать: <a href="https://t.me/zakaz_managers"><b>@zakaz_managers</b></a><br><a href="https://max.ru/join/x">Подпишись на нас в MAX</a></div>`;
+
+const parsed47039 = parseEmbedHtml(html47039, 47039);
+assert.strictEqual(parsed47039.photoUrl, "https://cdn4.telesco.pe/file/demo47039.jpg");
+assert.strictEqual(parsed47039.pin.title, "Nike Air Max Ishod — унисекс кроссовки | оригинал из США");
+assert.strictEqual(parsed47039.pin.link, "https://t.me/kupim_v_usa/47039");
+assert.ok(parsed47039.pin.description.includes("11800₽"));
+assert.ok(parsed47039.pin.description.includes("723660"));
+assert.ok(!parsed47039.pin.description.includes("zakaz_managers"));
+assert.deepStrictEqual(parsed47039.pin.tags, ["nike", "кроссовки", "обувь", "унисекс"]);
+assert.strictEqual(parsed47039.pin.board, undefined);
+
+const html46991 = `<b>Calvin Klein</b> 🇺🇸<br><br><a href="https://www.calvinklein.us/en/jacket.html">Куртка</a> (мужской раздел)<br><b><s>21500₽</s> ➡️ 7800₽ + доставка</b><br>M, XL, 2XL<br><br>ID: <code>723414</code>`;
+const pin46991 = parseCaptionHtml(html46991, { postId: 46991 });
+assert.strictEqual(pin46991.title, "Calvin Klein — мужские куртка | оригинал из США");
+assert.strictEqual(pin46991.link, "https://t.me/kupim_v_usa/46991");
+assert.strictEqual(pin46991.board, "Мужская одежда");
+assert.ok(pin46991.tags.includes("calvin klein"));
+assert.ok(pin46991.tags.includes("куртка"));
+assert.ok(pin46991.tags.includes("мужские"));
+assert.ok(pin46991.description.includes("M, XL, 2XL"));
+
+const html46874 = `<b>Timberland</b> 🇺🇸<br><br><a href="https://www.timberland.com/en-us/p/left">Худи слева</a> (мужской раздел)<br><b><s>8400₽</s> ➡️ 3000₽ + доставка</b><br><a href="https://www.timberland.com/en-us/p/right">Худи справа</a> (мужской раздел)<br><b><s>8400₽</s> ➡️ 2600₽ + доставка</b><br><br>ID: <code>721351</code>`;
+const pin46874 = parseCaptionHtml(html46874, { postId: 46874 });
+assert.strictEqual(pin46874.title, "Timberland — мужские худи | оригинал из США");
+assert.strictEqual(pin46874.link, "https://t.me/kupim_v_usa/46874");
+assert.ok(pin46874.description.includes("Худи справа"));
+assert.strictEqual(pin46874.board, "Мужская одежда");
+
+assert.deepStrictEqual(collectPostIds(["https://t.me/kupim_v_usa/47039", "47039", "abc"]), [47039]);
+assert.ok(pinDir(47039).endsWith("47039") || pinDir(47039).endsWith("47039\\") || /47039$/.test(pinDir(47039)));
+assert.throws(() => pinDir("../etc"));
+assert.ok(isJpeg(Buffer.from([0xff, 0xd8, 0xff, 0x00])));
+assert.ok(!isJpeg(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+
 console.log("ok");

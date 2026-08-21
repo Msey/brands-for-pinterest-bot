@@ -69,6 +69,21 @@ wscript .\start.vbs
 
 Проверка разбора ссылок и хранилища: `npm test`.
 
+## Папка для Pinterest
+
+Когда в личку бота приходит ссылка на пост, в каталоге бота сразу появляется папка с id поста — в ней `data.json` и `image.jpg` для расширения
+[Pinterest Pin Filler](https://github.com/Msey/chrome-extension-pinterest-pin-filler).
+
+Вручную то же самое:
+
+```powershell
+cd telegram-kupim-bot
+node export-pin.js https://t.me/kupim_v_usa/47039
+node export-pin.js --from-jsonl
+```
+
+На сайте `ru.pinterest.com/pin-creation-tool/` откройте боковую панель расширения и выберите папку, например `47039`.
+
 ## Где лежат данные
 
 Каждая строка в `data/posts.jsonl` — одна ссылка:

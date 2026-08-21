@@ -4,6 +4,7 @@ const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
 const { CHANNEL, extractFromMessage } = require("./links");
 const { PostStorage } = require("./storage");
+const { exportPost } = require("./export-pin");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -129,7 +130,7 @@ function main() {
         msg.chat.id,
         "Пришлите ссылку на пост из t.me/" +
           CHANNEL +
-          " — сохраню её на этом компьютере.\n\n" +
+          " — сохраню ссылку и папку с data.json и фото для Pinterest.\n\n" +
           "Примеры:\n" +
           "https://t.me/" +
           CHANNEL +
@@ -185,6 +186,8 @@ function main() {
 
       const added = [];
       const duplicates = [];
+      const exported = [];
+      const exportFailed = [];
       const from = msg.from || {};
       for (const { postId, url } of posts) {
         const ok = storage.add({
@@ -194,11 +197,20 @@ function main() {
           fromUsername: from.username,
         });
         (ok ? added : duplicates).push(url);
+        try {
+          await exportPost(postId);
+          exported.push(String(postId));
+        } catch (err) {
+          console.error("export_pin", postId, err && err.message ? err.message : err);
+          exportFailed.push(String(postId));
+        }
       }
 
       const parts = [];
       if (added.length) parts.push("Сохранил:\n" + added.join("\n"));
       if (duplicates.length) parts.push("Уже было:\n" + duplicates.join("\n"));
+      if (exported.length) parts.push("Папка с data.json и фото:\n" + exported.join("\n"));
+      if (exportFailed.length) parts.push("Не удалось выгрузить фото:\n" + exportFailed.join("\n"));
       await reply(bot, msg.chat.id, parts.join("\n\n"));
     })
   );
