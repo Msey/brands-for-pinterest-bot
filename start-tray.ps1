@@ -17,33 +17,62 @@ Add-Type -AssemblyName System.Drawing
 
 $Root = $PSScriptRoot
 Set-Location -LiteralPath $Root
+
+$AppTitle = "Бот kupim_v_usa"
+$RecentLimit = 20
+$BotJs = Join-Path $Root "bot.js"
+$PostsFile = Join-Path $Root "data\posts.jsonl"
+$NodeFallback = "C:\Program Files\nodejs\node.exe"
+
 $script:allowExit = $false
 $script:botProcess = $null
 $script:restarting = $false
 $script:consoleNotes = New-Object System.Collections.ArrayList
+$script:postLinesCache = @()
+$script:postsStamp = $null
+$script:timer = $null
 
 $mutex = New-Object System.Threading.Mutex($false, "Local\TelegramKupimBotTray")
 if (-not $mutex.WaitOne(0, $false)) {
   [System.Windows.Forms.MessageBox]::Show(
     "Бот уже работает в трее (рядом с часами). Откройте окно двойным щелчком по иконке.",
-    "kupim_v_usa",
+    $AppTitle,
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
   ) | Out-Null
   exit 0
 }
 
+function Show-AppMessage {
+  param(
+    [string]$Text,
+    [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information
+  )
+  [System.Windows.Forms.MessageBox]::Show(
+    $Text,
+    $AppTitle,
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    $Icon
+  ) | Out-Null
+}
+
 function Get-NodePath {
   $cmd = Get-Command node -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
-  $fallback = "C:\Program Files\nodejs\node.exe"
-  if (Test-Path -LiteralPath $fallback) { return $fallback }
+  if (Test-Path -LiteralPath $NodeFallback) { return $NodeFallback }
   return $null
+}
+
+function Test-OurBotProcess {
+  param($ProcessInfo)
+  if (-not $ProcessInfo -or -not $ProcessInfo.CommandLine) { return $false }
+  $escaped = [regex]::Escape($BotJs)
+  return $ProcessInfo.CommandLine -match $escaped
 }
 
 function Stop-BotProcesses {
   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and ($_.CommandLine -match 'bot\.js') } |
+    Where-Object { Test-OurBotProcess $_ } |
     ForEach-Object {
       Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
@@ -54,7 +83,10 @@ function Stop-BotProcesses {
 }
 
 function Start-BotProcess {
-  Stop-BotProcesses
+  param([switch]$SkipStop)
+  if (-not $SkipStop) {
+    Stop-BotProcesses
+  }
   if (-not (Test-Path -LiteralPath (Join-Path $Root "node_modules"))) {
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if ($npm) {
@@ -63,45 +95,71 @@ function Start-BotProcess {
   }
   $node = Get-NodePath
   if (-not $node) {
-    [System.Windows.Forms.MessageBox]::Show(
-      "Не найден Node.js. Установите его с https://nodejs.org/",
-      "kupim_v_usa",
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    return
+    Show-AppMessage -Text "Не найден Node.js. Установите его с https://nodejs.org/" -Icon Error
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $BotJs)) {
+    Show-AppMessage -Text "Не найден файл bot.js" -Icon Error
+    return $false
   }
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = $node
-  $psi.Arguments = "bot.js"
+  $psi.Arguments = "`"$BotJs`""
   $psi.WorkingDirectory = $Root
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
-  $script:botProcess = [System.Diagnostics.Process]::Start($psi)
+  try {
+    $script:botProcess = [System.Diagnostics.Process]::Start($psi)
+  }
+  catch {
+    $script:botProcess = $null
+    return $false
+  }
   if ($script:botProcess) {
     $script:botProcess.Refresh()
   }
+  return [bool]($script:botProcess -and -not $script:botProcess.HasExited)
 }
 
 function Get-BotStatus {
+  if ($script:restarting) { return "Перезапуск..." }
+  if ($script:botProcess) { $script:botProcess.Refresh() }
   if ($script:botProcess -and -not $script:botProcess.HasExited) {
     return "Работает"
   }
   return "Остановлен"
 }
 
+function Get-PostLines {
+  if (-not (Test-Path -LiteralPath $PostsFile)) {
+    $script:postLinesCache = @()
+    $script:postsStamp = $null
+    return @()
+  }
+  try {
+    $item = Get-Item -LiteralPath $PostsFile
+    $stamp = $item.LastWriteTimeUtc.Ticks.ToString() + ":" + $item.Length
+    if ($stamp -eq $script:postsStamp) {
+      return $script:postLinesCache
+    }
+    $lines = @(Get-Content -LiteralPath $PostsFile -Encoding UTF8 -ErrorAction Stop | Where-Object { $_.Trim() })
+    $script:postLinesCache = $lines
+    $script:postsStamp = $stamp
+    return $lines
+  }
+  catch {
+    return @($script:postLinesCache)
+  }
+}
+
 function Get-SavedCount {
-  $file = Join-Path $Root "data\posts.jsonl"
-  if (-not (Test-Path -LiteralPath $file)) { return 0 }
-  return @(Get-Content -LiteralPath $file -ErrorAction SilentlyContinue | Where-Object { $_.Trim() }).Count
+  return @(Get-PostLines).Count
 }
 
 function Get-RecentPosts {
-  $file = Join-Path $Root "data\posts.jsonl"
-  if (-not (Test-Path -LiteralPath $file)) { return @() }
-  $lines = @(Get-Content -LiteralPath $file -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
-  if ($lines.Count -gt 20) {
-    return $lines[($lines.Count - 20)..($lines.Count - 1)]
+  $lines = @(Get-PostLines)
+  if ($lines.Count -gt $RecentLimit) {
+    return $lines[($lines.Count - $RecentLimit)..($lines.Count - 1)]
   }
   return $lines
 }
@@ -124,17 +182,20 @@ function Update-LogList {
     foreach ($note in @($script:consoleNotes)) {
       [void]$script:logList.Items.Add($note)
     }
-    $graphics = $script:logList.CreateGraphics()
+    $maxWidth = [Math]::Max(1, $script:logList.ClientSize.Width)
     try {
-      $maxWidth = $script:logList.ClientSize.Width
+      $graphics = $script:logList.CreateGraphics()
       foreach ($entry in $script:logList.Items) {
         $w = [int]$graphics.MeasureString([string]$entry, $script:logList.Font).Width + 24
         if ($w -gt $maxWidth) { $maxWidth = $w }
       }
       $script:logList.HorizontalExtent = $maxWidth
     }
+    catch {
+      $script:logList.HorizontalExtent = 4000
+    }
     finally {
-      $graphics.Dispose()
+      if ($graphics) { $graphics.Dispose() }
     }
   }
   finally {
@@ -169,7 +230,7 @@ function Hide-MainWindow {
 }
 
 function Open-DataFolder {
-  $data = Join-Path $Root "data"
+  $data = Split-Path -Parent $PostsFile
   New-Item -ItemType Directory -Force -Path $data | Out-Null
   Start-Process explorer.exe -ArgumentList $data
 }
@@ -200,23 +261,11 @@ function Restart-Bot {
     }
     Stop-BotProcesses
     Start-Sleep -Milliseconds 700
-    $node = Get-NodePath
-    if (-not $node) {
-      Add-ConsoleNote "ошибка: не найден Node.js"
-      return
-    }
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $node
-    $psi.Arguments = "bot.js"
-    $psi.WorkingDirectory = $Root
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $script:botProcess = [System.Diagnostics.Process]::Start($psi)
-    if ($script:botProcess) { $script:botProcess.Refresh() }
+    $ok = Start-BotProcess -SkipStop
     Start-Sleep -Milliseconds 400
-
     if ($script:botProcess) { $script:botProcess.Refresh() }
-    if ($script:botProcess -and -not $script:botProcess.HasExited) {
+
+    if ($ok -and $script:botProcess -and -not $script:botProcess.HasExited) {
       $msg = "бот перезапущен, PID $($script:botProcess.Id)"
       if ($oldPid) { $msg = "бот перезапущен, PID $oldPid -> $($script:botProcess.Id)" }
       Add-ConsoleNote $msg
@@ -226,7 +275,7 @@ function Restart-Bot {
     }
     Update-WindowStatus
     if ($script:notify) {
-      $script:notify.ShowBalloonTip(2500, "kupim_v_usa", "Бот перезапущен", [System.Windows.Forms.ToolTipIcon]::Info)
+      $script:notify.ShowBalloonTip(2500, $AppTitle, "Бот перезапущен", [System.Windows.Forms.ToolTipIcon]::Info)
     }
   }
   catch {
@@ -241,24 +290,36 @@ function Restart-Bot {
 
 function Exit-App {
   $script:allowExit = $true
-  $script:form.Close()
+  if ($script:form) { $script:form.Close() }
   [System.Windows.Forms.Application]::Exit()
 }
 
 function Get-AppIcon {
   $icoPath = Join-Path $Root "icon.ico"
   if (Test-Path -LiteralPath $icoPath) {
-    return New-Object System.Drawing.Icon -ArgumentList $icoPath
+    try {
+      return New-Object System.Drawing.Icon -ArgumentList $icoPath
+    }
+    catch {
+      return [System.Drawing.SystemIcons]::Application
+    }
   }
   return [System.Drawing.SystemIcons]::Application
 }
 
-Start-BotProcess
+function Add-TrayMenuItem {
+  param($Menu, [string]$Text, $Action)
+  $item = New-Object System.Windows.Forms.MenuItem $Text
+  if ($Action) { $item.Add_Click($Action) | Out-Null }
+  [void]$Menu.MenuItems.Add($item)
+}
+
+Start-BotProcess | Out-Null
 
 $script:icon = Get-AppIcon
 
 $script:form = New-Object System.Windows.Forms.Form
-$script:form.Text = "Бот kupim_v_usa"
+$script:form.Text = $AppTitle
 $script:form.Size = New-Object System.Drawing.Size(720, 460)
 $script:form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
 $script:form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
@@ -317,50 +378,40 @@ $script:form.Add_FormClosing({
 $script:notify = New-Object System.Windows.Forms.NotifyIcon
 $script:notify.Icon = $script:icon
 $script:notify.Visible = $true
-$script:notify.Text = "Бот kupim_v_usa"
+$script:notify.Text = $AppTitle
 
 $menu = New-Object System.Windows.Forms.ContextMenu
-
-$itemOpen = New-Object System.Windows.Forms.MenuItem "Открыть окно"
-$itemOpen.Add_Click({ Show-MainWindow }) | Out-Null
-
-$itemFolder = New-Object System.Windows.Forms.MenuItem "Папка с данными"
-$itemFolder.Add_Click({ Open-DataFolder }) | Out-Null
-
-$itemRestart = New-Object System.Windows.Forms.MenuItem "Перезапустить"
-$itemRestart.Add_Click({ Restart-Bot }) | Out-Null
-
-$itemExit = New-Object System.Windows.Forms.MenuItem "Выход"
-$itemExit.Add_Click({ Exit-App }) | Out-Null
-
-[void]$menu.MenuItems.Add($itemOpen)
-[void]$menu.MenuItems.Add($itemFolder)
-[void]$menu.MenuItems.Add($itemRestart)
+Add-TrayMenuItem $menu "Открыть окно" { Show-MainWindow }
+Add-TrayMenuItem $menu "Папка с данными" { Open-DataFolder }
+Add-TrayMenuItem $menu "Перезапустить" { Restart-Bot }
 [void]$menu.MenuItems.Add("-")
-[void]$menu.MenuItems.Add($itemExit)
+Add-TrayMenuItem $menu "Выход" { Exit-App }
 $script:notify.ContextMenu = $menu
-
 $script:notify.Add_DoubleClick({ Show-MainWindow }) | Out-Null
 
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 3000
-$timer.Add_Tick({
+$script:timer = New-Object System.Windows.Forms.Timer
+$script:timer.Interval = 3000
+$script:timer.Add_Tick({
+  if ($script:restarting) { return }
+  if ($script:botProcess) { $script:botProcess.Refresh() }
   if ($script:botProcess -and $script:botProcess.HasExited) {
     $script:botProcess = $null
-    $script:notify.ShowBalloonTip(
-      4000,
-      "kupim_v_usa",
-      "Процесс бота остановился. Перезапуск — в меню трея.",
-      [System.Windows.Forms.ToolTipIcon]::Warning
-    )
+    if ($script:notify) {
+      $script:notify.ShowBalloonTip(
+        4000,
+        $AppTitle,
+        "Процесс бота остановился. Перезапуск — в меню трея.",
+        [System.Windows.Forms.ToolTipIcon]::Warning
+      )
+    }
   }
   Update-WindowStatus
 }) | Out-Null
-$timer.Start()
+$script:timer.Start()
 
 $script:notify.ShowBalloonTip(
   4000,
-  "kupim_v_usa",
+  $AppTitle,
   "Бот в трее. Двойной щелчок открывает окно, крестик прячет обратно.",
   [System.Windows.Forms.ToolTipIcon]::Info
 )
@@ -370,11 +421,17 @@ try {
   [System.Windows.Forms.Application]::Run($appContext)
 }
 finally {
-  $timer.Stop()
-  $timer.Dispose()
-  $script:notify.Visible = $false
-  $script:notify.Dispose()
+  if ($script:timer) {
+    $script:timer.Stop()
+    $script:timer.Dispose()
+  }
+  if ($script:notify) {
+    $script:notify.Visible = $false
+    $script:notify.Dispose()
+  }
   Stop-BotProcesses
-  $mutex.ReleaseMutex()
-  $mutex.Dispose()
+  if ($mutex) {
+    try { $mutex.ReleaseMutex() } catch { }
+    $mutex.Dispose()
+  }
 }

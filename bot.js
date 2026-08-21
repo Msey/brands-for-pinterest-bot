@@ -2,31 +2,53 @@
 
 const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
+const { CHANNEL, extractFromMessage } = require("./links");
 const { PostStorage } = require("./storage");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-const CHANNEL = "kupim_v_usa";
-const URL_RE = new RegExp(
-  `(?:https?://)?(?:t\\.me|telegram\\.me|telegram\\.dog)/(?:s/)?${CHANNEL}/(\\d+)`,
-  "gi"
-);
+const LIST_LIMIT = 10;
+const TG_MAX_LEN = 4000;
 
 const storage = new PostStorage(path.join(__dirname, "data", "posts.jsonl"));
 
-function extractPosts(text) {
-  if (!text) return [];
-  const found = [];
-  const seen = new Set();
-  const re = new RegExp(URL_RE.source, URL_RE.flags);
-  let match;
-  while ((match = re.exec(text)) !== null) {
-    const postId = Number(match[1]);
-    if (seen.has(postId)) continue;
-    seen.add(postId);
-    found.push({ postId, url: `https://t.me/${CHANNEL}/${postId}` });
+function isPrivateChat(msg) {
+  return Boolean(msg && msg.chat && msg.chat.type === "private");
+}
+
+function isCommandText(text) {
+  return typeof text === "string" && text.startsWith("/");
+}
+
+async function reply(bot, chatId, text) {
+  if (chatId == null || !text) return;
+  for (let i = 0; i < text.length; i += TG_MAX_LEN) {
+    await bot.sendMessage(chatId, text.slice(i, i + TG_MAX_LEN));
   }
-  return found;
+}
+
+function onPrivate(bot, handler) {
+  return async (msg) => {
+    if (!isPrivateChat(msg)) return;
+    try {
+      await handler(msg);
+    } catch (err) {
+      console.error(err);
+      try {
+        await reply(
+          bot,
+          msg.chat.id,
+          "Не получилось обработать сообщение. Проверьте диск и попробуйте ещё раз."
+        );
+      } catch (sendErr) {
+        console.error(sendErr);
+      }
+    }
+  };
+}
+
+function commandPattern(name) {
+  return new RegExp(`^/${name}(?:@\\w+)?(?:\\s|$)`, "i");
 }
 
 function main() {
@@ -38,69 +60,90 @@ function main() {
 
   const bot = new TelegramBot(token, { polling: true });
 
-  bot.onText(/^\/start\b/, async (msg) => {
-    if (msg.chat.type !== "private") return;
-    await bot.sendMessage(
-      msg.chat.id,
-      "Пришлите ссылку на пост из t.me/kupim_v_usa — сохраню её на этом компьютере.\n\n" +
-        "Примеры:\n" +
-        "https://t.me/kupim_v_usa/123\n" +
-        "t.me/kupim_v_usa/123\n\n" +
-        "/list — последние 10 ссылок\n" +
-        "/count — сколько уже сохранено"
-    );
-  });
-
-  bot.onText(/^\/list\b/, async (msg) => {
-    if (msg.chat.type !== "private") return;
-    const records = storage.listRecent(10);
-    if (!records.length) {
-      await bot.sendMessage(msg.chat.id, "Пока пусто. Пришлите ссылку на пост.");
-      return;
-    }
-    const lines = records.map((item) => `${item.post_id}: ${item.url}`);
-    await bot.sendMessage(msg.chat.id, "Последние ссылки:\n" + lines.join("\n"));
-  });
-
-  bot.onText(/^\/count\b/, async (msg) => {
-    if (msg.chat.type !== "private") return;
-    await bot.sendMessage(msg.chat.id, `Сохранено: ${storage.count()}`);
-  });
-
-  bot.on("message", async (msg) => {
-    if (msg.chat.type !== "private") return;
-    const text = msg.text || msg.caption || "";
-    if (!text || text.startsWith("/")) return;
-
-    const posts = extractPosts(text);
-    if (!posts.length) {
-      await bot.sendMessage(
+  bot.onText(
+    commandPattern("start"),
+    onPrivate(bot, async (msg) => {
+      await reply(
+        bot,
         msg.chat.id,
-        "Нужна ссылка на пост группы t.me/kupim_v_usa, например:\nhttps://t.me/kupim_v_usa/123"
+        "Пришлите ссылку на пост из t.me/" +
+          CHANNEL +
+          " — сохраню её на этом компьютере.\n\n" +
+          "Примеры:\n" +
+          "https://t.me/" +
+          CHANNEL +
+          "/123\n" +
+          "t.me/" +
+          CHANNEL +
+          "/123\n\n" +
+          "/list — последние 10 ссылок\n" +
+          "/count — сколько уже сохранено"
       );
-      return;
-    }
+    })
+  );
 
-    const added = [];
-    const duplicates = [];
-    for (const { postId, url } of posts) {
-      const ok = storage.add({
-        url,
-        postId,
-        fromUserId: msg.from.id,
-        fromUsername: msg.from.username,
-      });
-      (ok ? added : duplicates).push(url);
-    }
+  bot.onText(
+    commandPattern("list"),
+    onPrivate(bot, async (msg) => {
+      const records = storage.listRecent(LIST_LIMIT);
+      if (!records.length) {
+        await reply(bot, msg.chat.id, "Пока пусто. Пришлите ссылку на пост.");
+        return;
+      }
+      const lines = records.map((item) => `${item.post_id}: ${item.url}`);
+      await reply(bot, msg.chat.id, "Последние ссылки:\n" + lines.join("\n"));
+    })
+  );
 
-    const parts = [];
-    if (added.length) parts.push("Сохранил:\n" + added.join("\n"));
-    if (duplicates.length) parts.push("Уже было:\n" + duplicates.join("\n"));
-    await bot.sendMessage(msg.chat.id, parts.join("\n\n"));
-  });
+  bot.onText(
+    commandPattern("count"),
+    onPrivate(bot, async (msg) => {
+      await reply(bot, msg.chat.id, `Сохранено: ${storage.count()}`);
+    })
+  );
+
+  bot.on(
+    "message",
+    onPrivate(bot, async (msg) => {
+      const text = msg.text || msg.caption || "";
+      if (isCommandText(text)) return;
+
+      const posts = extractFromMessage(msg);
+      if (!posts.length) {
+        await reply(
+          bot,
+          msg.chat.id,
+          "Нужна ссылка на пост группы t.me/" +
+            CHANNEL +
+            ", например:\nhttps://t.me/" +
+            CHANNEL +
+            "/123"
+        );
+        return;
+      }
+
+      const added = [];
+      const duplicates = [];
+      const from = msg.from || {};
+      for (const { postId, url } of posts) {
+        const ok = storage.add({
+          url,
+          postId,
+          fromUserId: from.id,
+          fromUsername: from.username,
+        });
+        (ok ? added : duplicates).push(url);
+      }
+
+      const parts = [];
+      if (added.length) parts.push("Сохранил:\n" + added.join("\n"));
+      if (duplicates.length) parts.push("Уже было:\n" + duplicates.join("\n"));
+      await reply(bot, msg.chat.id, parts.join("\n\n"));
+    })
+  );
 
   bot.on("polling_error", (err) => {
-    console.error("polling_error:", err.message);
+    console.error("polling_error:", err && err.message ? err.message : err);
   });
 
   console.log("Бот запущен, жду сообщения в личке");
@@ -110,4 +153,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { extractPosts };
+module.exports = { main };

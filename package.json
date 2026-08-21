@@ -5,7 +5,8 @@
   "description": "Local bot that saves t.me/kupim_v_usa post links to a JSONL file",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "test": "node test.js"
   },
   "engines": {
     "node": ">=16"

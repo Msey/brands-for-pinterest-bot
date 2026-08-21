@@ -2,31 +2,55 @@
 
 const fs = require("fs");
 const path = require("path");
+const { isValidPostId } = require("./links");
+
+function toPostId(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  return isValidPostId(n) ? n : null;
+}
 
 class PostStorage {
   constructor(filePath) {
-    this.path = filePath;
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, "", "utf8");
+    if (!filePath || typeof filePath !== "string") {
+      throw new Error("Нужен путь к файлу хранилища");
     }
+    this.path = filePath;
+    this.ids = new Set();
+    this._ensureFile();
+    this._loadIds();
+  }
+
+  _ensureFile() {
+    fs.mkdirSync(path.dirname(this.path), { recursive: true });
+    if (!fs.existsSync(this.path)) {
+      fs.writeFileSync(this.path, "", "utf8");
+    }
+  }
+
+  _loadIds() {
     this.ids = new Set();
     for (const record of this.readRecords()) {
-      if (Number.isInteger(record.post_id)) {
-        this.ids.add(record.post_id);
-      }
+      const postId = toPostId(record.post_id);
+      if (postId !== null) this.ids.add(postId);
     }
   }
 
   readRecords() {
-    const text = fs.readFileSync(this.path, "utf8");
+    this._ensureFile();
+    let text = "";
+    try {
+      text = fs.readFileSync(this.path, "utf8");
+    } catch (err) {
+      if (err && err.code === "ENOENT") return [];
+      throw err;
+    }
     const records = [];
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
         const data = JSON.parse(trimmed);
-        if (data && typeof data === "object") {
+        if (data && typeof data === "object" && !Array.isArray(data)) {
           records.push(data);
         }
       } catch {
@@ -37,22 +61,24 @@ class PostStorage {
   }
 
   has(postId) {
-    return this.ids.has(postId);
+    const id = toPostId(postId);
+    return id !== null && this.ids.has(id);
   }
 
   add({ url, postId, fromUserId, fromUsername }) {
-    if (this.has(postId)) {
-      return false;
-    }
+    const id = toPostId(postId);
+    if (id === null || typeof url !== "string" || !url) return false;
+    if (this.has(id)) return false;
+    this._ensureFile();
     const record = {
       url,
-      post_id: postId,
+      post_id: id,
       saved_at: new Date().toISOString(),
-      from_user_id: fromUserId,
+      from_user_id: fromUserId == null ? null : fromUserId,
       from_username: fromUsername || null,
     };
     fs.appendFileSync(this.path, JSON.stringify(record) + "\n", "utf8");
-    this.ids.add(postId);
+    this.ids.add(id);
     return true;
   }
 
@@ -61,8 +87,10 @@ class PostStorage {
   }
 
   listRecent(limit = 10) {
+    const n = Math.floor(Number(limit));
+    if (!Number.isFinite(n) || n <= 0) return [];
     const records = this.readRecords();
-    return records.slice(-limit);
+    return records.slice(-n);
   }
 }
 
