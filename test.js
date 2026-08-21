@@ -107,8 +107,22 @@ assert.strictEqual(storage.listRecent(10).find((row) => row.post_id === 4).from_
 assert.strictEqual(storage.count(), 2);
 assert.strictEqual(storage.listRecent(10)[0].post_id, 1);
 
+assert.strictEqual(
+  storage.add({ url: "https://t.me/kupim_v_usa/5", postId: 5, fromUserId: 8 }),
+  true
+);
+assert.deepStrictEqual(
+  storage.listRecent(10, 8).map((row) => row.post_id),
+  [5]
+);
+assert.ok(storage.listRecent(10, 7).every((row) => row.from_user_id === 7));
+assert.deepStrictEqual(storage.listRecent(10, 999), []);
+assert.strictEqual(storage.count(8), 1);
+assert.strictEqual(storage.count(7), 1);
+assert.strictEqual(storage.count(999), 0);
+
 fs.appendFileSync(file, "not-json\n[]\n", "utf8");
-assert.strictEqual(storage.listRecent(10).length, 2);
+assert.strictEqual(storage.listRecent(10).length, 3);
 
 fs.rmSync(dir, { recursive: true, force: true });
 
@@ -149,7 +163,7 @@ assert.ok(pin46874.description.includes("Худи справа"));
 assert.strictEqual(pin46874.board, "Мужская одежда");
 
 assert.deepStrictEqual(collectPostIds(["https://t.me/kupim_v_usa/47039", "47039", "abc"]), [47039]);
-assert.ok(pinDir(47039).endsWith("47039") || pinDir(47039).endsWith("47039\\") || /47039$/.test(pinDir(47039)));
+assert.ok(/pin-templates[/\\]47039$/.test(pinDir(47039)));
 assert.throws(() => pinDir("../etc"));
 assert.ok(isJpeg(Buffer.from([0xff, 0xd8, 0xff, 0x00])));
 assert.ok(!isJpeg(Buffer.from([0x89, 0x50, 0x4e, 0x47])));

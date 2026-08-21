@@ -147,7 +147,7 @@ function main() {
   bot.onText(
     commandPattern("list"),
     onPrivate(bot, async (msg) => {
-      const records = storage.listRecent(LIST_LIMIT);
+      const records = storage.listRecent(LIST_LIMIT, msg.from && msg.from.id);
       if (!records.length) {
         await reply(bot, msg.chat.id, "Пока пусто. Пришлите ссылку на пост.");
         return;
@@ -160,7 +160,7 @@ function main() {
   bot.onText(
     commandPattern("count"),
     onPrivate(bot, async (msg) => {
-      await reply(bot, msg.chat.id, `Сохранено: ${storage.count()}`);
+      await reply(bot, msg.chat.id, `Сохранено: ${storage.count(msg.from && msg.from.id)}`);
     })
   );
 
@@ -186,7 +186,6 @@ function main() {
 
       const added = [];
       const duplicates = [];
-      const exported = [];
       const exportFailed = [];
       const from = msg.from || {};
       for (const { postId, url } of posts) {
@@ -199,7 +198,6 @@ function main() {
         (ok ? added : duplicates).push(url);
         try {
           await exportPost(postId);
-          exported.push(String(postId));
         } catch (err) {
           console.error("export_pin", postId, err && err.message ? err.message : err);
           exportFailed.push(String(postId));
@@ -209,7 +207,6 @@ function main() {
       const parts = [];
       if (added.length) parts.push("Сохранил:\n" + added.join("\n"));
       if (duplicates.length) parts.push("Уже было:\n" + duplicates.join("\n"));
-      if (exported.length) parts.push("Папка с data.json и фото:\n" + exported.join("\n"));
       if (exportFailed.length) parts.push("Не удалось выгрузить фото:\n" + exportFailed.join("\n"));
       await reply(bot, msg.chat.id, parts.join("\n\n"));
     })

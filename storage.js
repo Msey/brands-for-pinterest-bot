@@ -140,14 +140,21 @@ class PostStorage {
     return true;
   }
 
-  count() {
-    return this.ids.size;
+  count(userId) {
+    if (userId === undefined) return this.ids.size;
+    const uid = sanitizeUserId(userId);
+    if (uid === null) return 0;
+    return this.readRecords().filter((row) => row.from_user_id === uid).length;
   }
 
-  listRecent(limit = 10) {
+  listRecent(limit = 10, userId) {
     const n = Math.floor(Number(limit));
     if (!Number.isFinite(n) || n <= 0) return [];
-    const records = this.readRecords();
+    let records = this.readRecords();
+    const uid = sanitizeUserId(userId);
+    if (uid !== null) {
+      records = records.filter((row) => row.from_user_id === uid);
+    }
     return records.slice(-Math.min(n, 50));
   }
 }

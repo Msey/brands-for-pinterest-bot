@@ -18,7 +18,7 @@ function pinDir(postId) {
   if (!/^\d{1,16}$/.test(id)) {
     throw new Error("Некорректный id поста");
   }
-  return path.join(__dirname, id);
+  return path.join(__dirname, "pin-templates", id);
 }
 
 function jsonlPath() {

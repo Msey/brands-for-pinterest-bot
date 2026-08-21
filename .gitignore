@@ -3,8 +3,8 @@
 !.env.example
 node_modules/
 data/
+pin-templates/
 pins/
-/[0-9]*
 *.lnk
 tray-error.log
 .venv/
