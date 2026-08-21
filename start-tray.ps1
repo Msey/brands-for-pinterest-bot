@@ -1,14 +1,86 @@
 ﻿Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+public struct KupimTrayRect {
+  public int Left;
+  public int Top;
+  public int Right;
+  public int Bottom;
+}
 public class KupimBotWin32 {
   public const int SW_RESTORE = 9;
+  const uint WM_MOUSEMOVE = 0x0200;
+  const uint SMTO_ABORTIFHUNG = 0x0002;
+  const int MaxAxisSteps = 24;
+  const int MaxChildren = 16;
+  const int MaxPx = 2048;
   [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
+  [DllImport("user32.dll")]
+  static extern bool GetClientRect(IntPtr hWnd, ref KupimTrayRect lpRect);
+  [DllImport("user32.dll")]
+  static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+  public static void RefreshNotificationArea() {
+    SweepTrayNotify(FindWindow("Shell_TrayWnd", null));
+    SweepTrayNotify(FindWindow("Shell_SecondaryTrayWnd", null));
+    SweepToolbars(FindWindow("NotifyIconOverflowWindow", null));
+  }
+
+  static void SweepTrayNotify(IntPtr root) {
+    if (root == IntPtr.Zero) return;
+    IntPtr notify = IntPtr.Zero;
+    for (int n = 0; n < MaxChildren; n++) {
+      notify = FindWindowEx(root, notify, "TrayNotifyWnd", null);
+      if (notify == IntPtr.Zero) return;
+      IntPtr pager = IntPtr.Zero;
+      bool foundPager = false;
+      for (int p = 0; p < MaxChildren; p++) {
+        pager = FindWindowEx(notify, pager, "SysPager", null);
+        if (pager == IntPtr.Zero) break;
+        foundPager = true;
+        SweepToolbars(pager);
+      }
+      if (!foundPager) SweepToolbars(notify);
+    }
+  }
+
+  static void SweepToolbars(IntPtr parent) {
+    if (parent == IntPtr.Zero) return;
+    IntPtr toolbar = IntPtr.Zero;
+    for (int n = 0; n < MaxChildren; n++) {
+      toolbar = FindWindowEx(parent, toolbar, "ToolbarWindow32", null);
+      if (toolbar == IntPtr.Zero) return;
+      Sweep(toolbar);
+    }
+  }
+
+  static void Sweep(IntPtr hwnd) {
+    KupimTrayRect rect = new KupimTrayRect();
+    if (!GetClientRect(hwnd, ref rect)) return;
+    int width = rect.Right;
+    int height = rect.Bottom;
+    if (width <= 0 || height <= 0) return;
+    if (width > MaxPx) width = MaxPx;
+    if (height > MaxPx) height = MaxPx;
+    int stepX = Math.Max(8, (width + MaxAxisSteps - 1) / MaxAxisSteps);
+    int stepY = Math.Max(8, (height + MaxAxisSteps - 1) / MaxAxisSteps);
+    IntPtr unused;
+    for (int x = 0; x <= width; x += stepX) {
+      for (int y = 0; y <= height; y += stepY) {
+        IntPtr lParam = (IntPtr)unchecked((int)((y << 16) | (x & 0xFFFF)));
+        if (SendMessageTimeout(hwnd, WM_MOUSEMOVE, IntPtr.Zero, lParam, SMTO_ABORTIFHUNG, 10, out unused) == IntPtr.Zero) {
+          return;
+        }
+      }
+    }
+  }
 }
 "@
 $console = [KupimBotWin32]::GetConsoleWindow()
@@ -72,6 +144,12 @@ $script:activateTimer = $null
 
 $MutexName = "Local\TelegramKupimBotTray"
 $ActivateEventName = "Local\TelegramKupimBotTrayActivate"
+
+function Update-TrayArea {
+  try {
+    [KupimBotWin32]::RefreshNotificationArea()
+  } catch { }
+}
 
 function Restore-ExistingTrayWindow {
   try {
@@ -212,7 +290,7 @@ function Get-BotStatus {
 
 function Get-SafeDisplayLine([string]$line) {
   if ([string]::IsNullOrEmpty($line)) { return "" }
-  $clean = [regex]::Replace($line, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '')
+  $clean = [regex]::Replace($line, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u202A-\u202E\u2066-\u2069]', '')
   if ($clean.Length -gt $MaxDisplayLen) {
     return $clean.Substring(0, $MaxDisplayLen) + "..."
   }
@@ -701,8 +779,9 @@ $script:form.Add_FormClosing({
 
 $script:notify = New-Object System.Windows.Forms.NotifyIcon
 $script:notify.Icon = $script:icon
-$script:notify.Visible = $true
 $script:notify.Text = $AppTitle
+Update-TrayArea
+$script:notify.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenu
 Add-TrayMenuItem $menu "Открыть окно" { Show-MainWindow }
@@ -805,6 +884,8 @@ finally {
   if ($script:notify) {
     $script:notify.Visible = $false
     $script:notify.Dispose()
+    $script:notify = $null
+    Update-TrayArea
   }
   if ($script:popupBitmap) {
     $script:popupBitmap.Dispose()
