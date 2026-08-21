@@ -14,6 +14,7 @@ const { PostStorage, parseRecordLine } = require("./storage");
 const { collectPostIds, formatPinJson, isJpeg, pinDir } = require("./export-pin");
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
+const { BOARDS } = require("./boards");
 
 assert.deepStrictEqual(extractPosts(""), []);
 assert.deepStrictEqual(extractPosts(null), []);
@@ -150,7 +151,7 @@ const html46991 = `<b>Calvin Klein</b> 🇺🇸<br><br><a href="https://www.calv
 const pin46991 = parseCaptionHtml(html46991, { postId: 46991 });
 assert.strictEqual(pin46991.title, "Calvin Klein — мужские куртка | оригинал из США");
 assert.strictEqual(pin46991.link, "https://t.me/kupim_v_usa/46991");
-assert.strictEqual(pin46991.board, "Мужская одежда");
+assert.strictEqual(pin46991.board, BOARDS.jackets);
 assert.ok(pin46991.tags.includes("calvin klein"));
 assert.ok(pin46991.tags.includes("куртка"));
 assert.ok(pin46991.tags.includes("мужские"));
@@ -161,7 +162,21 @@ const pin46874 = parseCaptionHtml(html46874, { postId: 46874 });
 assert.strictEqual(pin46874.title, "Timberland — мужские худи | оригинал из США");
 assert.strictEqual(pin46874.link, "https://t.me/kupim_v_usa/46874");
 assert.ok(pin46874.description.includes("Худи справа"));
-assert.strictEqual(pin46874.board, "Мужская одежда");
+assert.strictEqual(pin46874.board, BOARDS.menClothes);
+
+assert.strictEqual(BOARDS.accessories, "Аксессуары");
+assert.strictEqual(BOARDS.womenShoes, "Женская обувь");
+assert.strictEqual(BOARDS.womenClothes, "Женская одежда");
+assert.strictEqual(BOARDS.cosmetics, "Косметика для лица и тела");
+assert.strictEqual(BOARDS.swimwear, "Купальник");
+assert.strictEqual(BOARDS.jackets, "Куртки");
+assert.strictEqual(BOARDS.menShoes, "Мужская обувь");
+assert.strictEqual(BOARDS.menClothes, "Мужская одежда, бренды из США, купим и доставим");
+assert.strictEqual(BOARDS.underwear, "Нижнее белье и домашняя одежда");
+assert.strictEqual(BOARDS.reviews, "Отзывы");
+assert.strictEqual(BOARDS.glasses, "Очки");
+assert.strictEqual(BOARDS.bags, "Сумки женские и мужские");
+assert.strictEqual(Object.keys(BOARDS).length, 12);
 
 assert.deepStrictEqual(collectPostIds(["https://t.me/kupim_v_usa/47039", "47039", "abc"]), [47039]);
 assert.ok(/pin-templates[/\\]47039$/.test(pinDir(47039)));

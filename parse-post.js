@@ -1,6 +1,7 @@
 "use strict";
 
 const { CHANNEL, canonicalUrl, isValidPostId } = require("./links");
+const { inferBoard } = require("./boards");
 
 const MAX_TITLE = 100;
 const MAX_DESC = 500;
@@ -22,7 +23,8 @@ const TYPE_RULES = [
   { match: /^очки\s+солнцезащитные(?:\s|$)/i, type: "очки", category: "очки", boardKind: "очки" },
   { match: /^кроссовки(?:\s|$)/i, type: "кроссовки", category: "обувь", boardKind: "обувь" },
   { match: /^кеды(?:\s|$)/i, type: "кеды", category: "обувь", boardKind: "обувь" },
-  { match: /^куртка(?:\s|$)/i, type: "куртка", category: "одежда", boardKind: "одежда" },
+  { match: /^куртка(?:\s|$)/i, type: "куртка", category: "одежда", boardKind: "куртки" },
+  { match: /^купальник(?:\s|$)/i, type: "купальник", category: "одежда", boardKind: "купальник" },
   { match: /^худи(?:\s|$)/i, type: "худи", category: "одежда", boardKind: "одежда" },
   { match: /^брюки(?:\s|$)/i, type: "брюки", category: "одежда", boardKind: "одежда" },
   { match: /^сумка(?:\s|$)/i, type: "сумка", category: "сумка", boardKind: "сумки" },
@@ -217,16 +219,6 @@ function brandTags(brand) {
   return [];
 }
 
-function inferBoard(boardKind, audienceKey) {
-  if (boardKind === "сумки") return "Сумки";
-  if (boardKind === "очки") return "Очки";
-  if (boardKind === "обувь" && audienceKey === "women") return "Женская обувь";
-  if (boardKind === "обувь" && audienceKey === "men") return "Мужская обувь";
-  if (boardKind === "одежда" && audienceKey === "women") return "Женская одежда";
-  if (boardKind === "одежда" && audienceKey === "men") return "Мужская одежда";
-  return "";
-}
-
 function extraLines(text) {
   const skip = /для заказа|подпишись|zakaz_managers|\bID:\s*\d+|^\d+\s*₽|унисекс|мужской раздел|женский раздел/i;
   return text
@@ -321,7 +313,7 @@ function parseCaptionHtml(captionHtml, options) {
     link: canonicalUrl(postId),
     tags: buildTags({ brand, product: primary, audience }),
   };
-  const board = inferBoard(primary.boardKind, audience.key);
+  const board = inferBoard(primary, audience.key);
   if (board) pin.board = board;
   return pin;
 }
