@@ -4,6 +4,7 @@
 node_modules/
 data/
 *.lnk
+tray-error.log
 .venv/
 venv/
 __pycache__/

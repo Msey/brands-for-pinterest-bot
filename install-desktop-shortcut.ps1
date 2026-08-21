@@ -11,17 +11,25 @@
 
   $lnkPath = Join-Path $desktop "Бот kupim_v_usa.lnk"
   $wscript = Join-Path $env:SystemRoot "System32\wscript.exe"
-  $shell = New-Object -ComObject WScript.Shell
-  $shortcut = $shell.CreateShortcut($lnkPath)
-  $shortcut.TargetPath = $wscript
-  $shortcut.Arguments = '"' + $vbs + '"'
-  $shortcut.WorkingDirectory = $Root
-  $shortcut.WindowStyle = 7
-  $shortcut.Description = "Локальный Telegram-бот kupim_v_usa"
-  if (Test-Path -LiteralPath $ico) {
-    $shortcut.IconLocation = $ico + ",0"
+  $shell = $null
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = $wscript
+    $shortcut.Arguments = '"' + $vbs + '"'
+    $shortcut.WorkingDirectory = $Root
+    $shortcut.WindowStyle = 7
+    $shortcut.Description = "Локальный Telegram-бот kupim_v_usa"
+    if (Test-Path -LiteralPath $ico) {
+      $shortcut.IconLocation = $ico + ",0"
+    }
+    $shortcut.Save()
   }
-  $shortcut.Save()
+  finally {
+    if ($shell) {
+      [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+  }
 }
 
 if ($MyInvocation.InvocationName -ne ".") {

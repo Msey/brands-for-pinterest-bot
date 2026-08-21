@@ -53,6 +53,20 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   extractFromMessage({
+    text: "https://t.me/kupim_v_usa/15",
+    entities: [{ type: "url", offset: 0, length: Number.MAX_SAFE_INTEGER }],
+  }),
+  [{ postId: 15, url: "https://t.me/kupim_v_usa/15" }]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    text: "https://t.me/kupim_v_usa/15",
+    entities: [{ type: "url", offset: Number.NaN, length: 5 }],
+  }),
+  [{ postId: 15, url: "https://t.me/kupim_v_usa/15" }]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
     text: "x",
     entities: [{ type: "text_link", offset: 0, length: 1, url: "javascript:alert(1)" }],
   }),

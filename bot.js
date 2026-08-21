@@ -12,17 +12,6 @@ const TG_MAX_LEN = 4000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX = 30;
 
-const storage = new PostStorage(path.join(__dirname, "data", "posts.jsonl"));
-const rateHits = new Map();
-
-function isPrivateChat(msg) {
-  return Boolean(msg && msg.chat && msg.chat.type === "private" && Number.isFinite(msg.chat.id));
-}
-
-function isCommandText(text) {
-  return typeof text === "string" && text.startsWith("/");
-}
-
 function parseAllowList(raw) {
   if (!raw || !String(raw).trim()) return null;
   const ids = String(raw)
@@ -32,17 +21,28 @@ function parseAllowList(raw) {
   return ids.length ? new Set(ids) : null;
 }
 
+const storage = new PostStorage(path.join(__dirname, "data", "posts.jsonl"));
+const rateHits = new Map();
+const allowList = parseAllowList(process.env.BOT_ALLOW_USER_IDS);
+
+function isPrivateChat(msg) {
+  return Boolean(msg && msg.chat && msg.chat.type === "private" && Number.isFinite(msg.chat.id));
+}
+
+function isCommandText(text) {
+  return typeof text === "string" && text.startsWith("/");
+}
+
 function isAllowedUser(msg) {
-  const allow = parseAllowList(process.env.BOT_ALLOW_USER_IDS);
-  if (!allow) return true;
+  if (!allowList) return true;
   const id = msg && msg.from && msg.from.id;
-  return allow.has(id);
+  return allowList.has(id);
 }
 
 function tooManyRequests(userId) {
   if (!userId) return true;
   const now = Date.now();
-  if (rateHits.size > 2000) {
+  if (rateHits.size >= 64) {
     for (const [key, slot] of rateHits) {
       if (now > slot.reset) rateHits.delete(key);
     }

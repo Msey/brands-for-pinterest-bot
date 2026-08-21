@@ -15,6 +15,22 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+public class TrayPopupForm : Form {
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override CreateParams CreateParams {
+    get {
+      CreateParams cp = base.CreateParams;
+      cp.ExStyle |= 0x00000080;
+      cp.ExStyle |= 0x08000000;
+      return cp;
+    }
+  }
+}
+"@
+
 $Root = $PSScriptRoot
 Set-Location -LiteralPath $Root
 
@@ -38,6 +54,13 @@ $script:knownCount = 0
 $script:timer = $null
 $script:watcher = $null
 $script:watchDebounce = $null
+$script:popupForm = $null
+$script:popupTimer = $null
+$script:popupClick = $null
+$script:popupBitmap = $null
+$script:fontTitle = $null
+$script:fontBody = $null
+$script:watchHandler = $null
 
 . (Join-Path $Root "install-desktop-shortcut.ps1")
 Install-KupimDesktopShortcut -Root $Root
@@ -50,6 +73,7 @@ if (-not $mutex.WaitOne(0, $false)) {
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
   ) | Out-Null
+  $mutex.Dispose()
   exit 0
 }
 
@@ -168,16 +192,35 @@ function Get-PostLines {
     if ($stamp -eq $script:postsStamp) {
       return $script:postLinesCache
     }
-    $lines = @(Get-Content -LiteralPath $PostsFile -Encoding UTF8 -ErrorAction Stop |
-      Where-Object { $_.Trim() } |
-      ForEach-Object { Get-SafeDisplayLine $_ })
-    $script:postsCount = $lines.Count
-    if ($lines.Count -gt $RecentLimit) {
-      $script:postLinesCache = $lines[($lines.Count - $RecentLimit)..($lines.Count - 1)]
+    $count = 0
+    $recent = New-Object 'System.Collections.Generic.Queue[string]'
+    $stream = [System.IO.File]::Open(
+      $PostsFile,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::Read,
+      [System.IO.FileShare]::ReadWrite
+    )
+    try {
+      $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+      try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+          if ([string]::IsNullOrWhiteSpace($line)) { continue }
+          $count++
+          $recent.Enqueue((Get-SafeDisplayLine $line))
+          if ($recent.Count -gt $RecentLimit) {
+            [void]$recent.Dequeue()
+          }
+        }
+      }
+      finally {
+        $reader.Dispose()
+      }
     }
-    else {
-      $script:postLinesCache = $lines
+    finally {
+      $stream.Dispose()
     }
+    $script:postsCount = $count
+    $script:postLinesCache = @($recent.ToArray())
     $script:postsStamp = $stamp
     return $script:postLinesCache
   }
@@ -201,25 +244,121 @@ function Get-LastSavedUrl {
   return $null
 }
 
+function Close-TrayPopup {
+  if ($script:popupTimer) {
+    $script:popupTimer.Stop()
+    $script:popupTimer.Dispose()
+    $script:popupTimer = $null
+  }
+  if ($script:popupForm -and -not $script:popupForm.IsDisposed) {
+    foreach ($ctrl in @($script:popupForm.Controls)) {
+      if ($ctrl -is [System.Windows.Forms.PictureBox]) {
+        $ctrl.Image = $null
+      }
+      $ctrl.Dispose()
+    }
+    $script:popupForm.Hide()
+    $script:popupForm.Dispose()
+  }
+  $script:popupForm = $null
+  $script:popupClick = $null
+}
+
+function Show-TrayPopup {
+  param(
+    [string]$Title,
+    [string]$Text,
+    [int]$TimeoutMs = 15000,
+    [scriptblock]$OnClick
+  )
+  Close-TrayPopup
+  $script:popupClick = $OnClick
+  $Title = Get-SafeDisplayLine $Title
+  $Text = Get-SafeDisplayLine $Text
+
+  $form = New-Object TrayPopupForm
+  $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+  $form.ShowInTaskbar = $false
+  $form.TopMost = $true
+  $form.Size = New-Object System.Drawing.Size(380, 108)
+  $form.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 48)
+  $form.Cursor = [System.Windows.Forms.Cursors]::Hand
+
+  $work = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $form.Location = New-Object System.Drawing.Point(
+    ($work.Right - $form.Width - 10),
+    ($work.Bottom - $form.Height - 10)
+  )
+
+  $click = {
+    if ($script:popupClick) { & $script:popupClick }
+    Close-TrayPopup
+  }
+
+  if ($script:icon) {
+    $pic = New-Object System.Windows.Forms.PictureBox
+    $pic.Size = New-Object System.Drawing.Size(32, 32)
+    $pic.Location = New-Object System.Drawing.Point(12, 14)
+    $pic.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    if (-not $script:popupBitmap) {
+      $script:popupBitmap = $script:icon.ToBitmap()
+    }
+    $pic.Image = $script:popupBitmap
+    $pic.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $pic.Add_Click($click)
+    $form.Controls.Add($pic)
+  }
+
+  $titleLabel = New-Object System.Windows.Forms.Label
+  $titleLabel.Location = New-Object System.Drawing.Point(52, 10)
+  $titleLabel.Size = New-Object System.Drawing.Size(290, 22)
+  $titleLabel.ForeColor = [System.Drawing.Color]::White
+  $titleLabel.Font = $script:fontTitle
+  $titleLabel.Text = $Title
+  $titleLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $titleLabel.Add_Click($click)
+  $form.Controls.Add($titleLabel)
+
+  $bodyLabel = New-Object System.Windows.Forms.Label
+  $bodyLabel.Location = New-Object System.Drawing.Point(52, 34)
+  $bodyLabel.Size = New-Object System.Drawing.Size(300, 62)
+  $bodyLabel.ForeColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
+  $bodyLabel.Font = $script:fontBody
+  $bodyLabel.Text = $Text
+  $bodyLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $bodyLabel.Add_Click($click)
+  $form.Controls.Add($bodyLabel)
+
+  $closeBtn = New-Object System.Windows.Forms.Label
+  $closeBtn.Text = "x"
+  $closeBtn.Location = New-Object System.Drawing.Point(354, 4)
+  $closeBtn.Size = New-Object System.Drawing.Size(22, 22)
+  $closeBtn.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+  $closeBtn.ForeColor = [System.Drawing.Color]::Silver
+  $closeBtn.Cursor = [System.Windows.Forms.Cursors]::Hand
+  $closeBtn.Add_Click({ Close-TrayPopup })
+  $form.Controls.Add($closeBtn)
+
+  $form.Add_Click($click)
+  $script:popupForm = $form
+  $script:popupTimer = New-Object System.Windows.Forms.Timer
+  $script:popupTimer.Interval = [Math]::Max(1000, $TimeoutMs)
+  $script:popupTimer.Add_Tick({ Close-TrayPopup })
+  $script:popupTimer.Start()
+  $form.Show()
+}
+
 function Show-NewLinkBalloon {
   param([int]$Added = 1)
-  if (-not $script:notify) { return }
   $url = Get-LastSavedUrl
   if ($Added -le 1 -and $url) {
-    $text = "Сохранено: $url`nНажмите, чтобы открыть папку с базой."
+    $text = "$url`nНажмите, чтобы открыть папку с базой."
   }
   else {
     $text = "Сохранено ссылок: $Added`nНажмите, чтобы открыть папку с базой."
   }
-  if ($text.Length -gt 250) {
-    $text = $text.Substring(0, 247) + "..."
-  }
-  $script:notify.ShowBalloonTip(
-    $BalloonMs,
-    $AppTitle,
-    $text,
-    [System.Windows.Forms.ToolTipIcon]::Info
-  )
+  Show-TrayPopup -Title "Новая ссылка" -Text $text -TimeoutMs $BalloonMs -OnClick { Open-DataFolder }
 }
 
 function Check-NewPosts {
@@ -236,17 +375,9 @@ function Check-NewPosts {
   }
 }
 
-function Get-RecentPosts {
-  $lines = @(Get-PostLines)
-  if ($lines.Count -gt $RecentLimit) {
-    return $lines[($lines.Count - $RecentLimit)..($lines.Count - 1)]
-  }
-  return $lines
-}
-
 function Update-LogList {
   if (-not $script:logList) { return }
-  $items = @(Get-RecentPosts)
+  $items = @(Get-PostLines)
   $script:logList.BeginUpdate()
   try {
     $script:logList.Items.Clear()
@@ -296,16 +427,18 @@ function Update-WindowStatus {
   else {
     $script:countLabel.Text = "Сохранено ссылок: $count"
   }
-  Update-LogList
+  if ($script:form -and $script:form.Visible) {
+    Update-LogList
+  }
 }
 
 function Show-MainWindow {
-  Update-WindowStatus
   $script:form.ShowInTaskbar = $true
   if ($script:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
     $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
   }
   $script:form.Show()
+  Update-WindowStatus
   $script:form.Activate()
   [void]$script:form.BringToFront()
 }
@@ -366,9 +499,7 @@ function Restart-Bot {
       Add-ConsoleNote "ошибка: процесс bot.js не запустился"
     }
     Update-WindowStatus
-    if ($script:notify) {
-      $script:notify.ShowBalloonTip(2500, $AppTitle, "Бот перезапущен", [System.Windows.Forms.ToolTipIcon]::Info)
-    }
+    Show-TrayPopup -Title $AppTitle -Text "Бот перезапущен" -TimeoutMs 2500
   }
   catch {
     Add-ConsoleNote "ошибка перезапуска: $($_.Exception.Message)"
@@ -409,6 +540,8 @@ function Add-TrayMenuItem {
 Start-BotProcess | Out-Null
 
 $script:icon = Get-AppIcon
+$script:fontTitle = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$script:fontBody = New-Object System.Drawing.Font("Segoe UI", 9)
 
 $script:form = New-Object System.Windows.Forms.Form
 $script:form.Text = $AppTitle
@@ -480,7 +613,6 @@ Add-TrayMenuItem $menu "Перезапустить" { Restart-Bot }
 Add-TrayMenuItem $menu "Выход" { Exit-App }
 $script:notify.ContextMenu = $menu
 $script:notify.Add_DoubleClick({ Show-MainWindow }) | Out-Null
-$script:notify.Add_BalloonTipClicked({ Open-DataFolder }) | Out-Null
 
 Get-PostLines | Out-Null
 $script:knownCount = Get-SavedCount
@@ -503,12 +635,12 @@ $script:watcher.Filter = "posts.jsonl"
 $script:watcher.IncludeSubdirectories = $false
 $script:watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size -bor [System.IO.NotifyFilters]::FileName
 $script:watcher.SynchronizingObject = $script:form
-$watchHandler = {
+$script:watchHandler = {
   $script:watchDebounce.Stop()
   $script:watchDebounce.Start()
 }
-$script:watcher.add_Changed($watchHandler)
-$script:watcher.add_Created($watchHandler)
+$script:watcher.add_Changed($script:watchHandler)
+$script:watcher.add_Created($script:watchHandler)
 $script:watcher.EnableRaisingEvents = $true
 
 $script:timer = New-Object System.Windows.Forms.Timer
@@ -519,12 +651,7 @@ $script:timer.Add_Tick({
   if ($script:botProcess -and $script:botProcess.HasExited) {
     $script:botProcess = $null
     if ($script:notify) {
-      $script:notify.ShowBalloonTip(
-        4000,
-        $AppTitle,
-        "Процесс бота остановился. Перезапуск — в меню трея.",
-        [System.Windows.Forms.ToolTipIcon]::Warning
-      )
+      Show-TrayPopup -Title $AppTitle -Text "Процесс бота остановился. Перезапуск — в меню трея." -TimeoutMs 8000
     }
   }
   Check-NewPosts
@@ -532,24 +659,26 @@ $script:timer.Add_Tick({
 }) | Out-Null
 $script:timer.Start()
 
-$script:notify.ShowBalloonTip(
-  4000,
-  $AppTitle,
-  "Бот в трее. Двойной щелчок открывает окно, крестик прячет обратно.",
-  [System.Windows.Forms.ToolTipIcon]::Info
-)
+Show-TrayPopup -Title $AppTitle -Text "Бот в трее. Двойной щелчок по иконке открывает окно." -TimeoutMs 4000
 
 $appContext = New-Object System.Windows.Forms.ApplicationContext
 try {
   [System.Windows.Forms.Application]::Run($appContext)
 }
 finally {
+  if ($script:popupTimer -or $script:popupForm) {
+    Close-TrayPopup
+  }
   if ($script:watchDebounce) {
     $script:watchDebounce.Stop()
     $script:watchDebounce.Dispose()
   }
   if ($script:watcher) {
     $script:watcher.EnableRaisingEvents = $false
+    if ($script:watchHandler) {
+      $script:watcher.remove_Changed($script:watchHandler)
+      $script:watcher.remove_Created($script:watchHandler)
+    }
     $script:watcher.Dispose()
   }
   if ($script:timer) {
@@ -560,6 +689,12 @@ finally {
     $script:notify.Visible = $false
     $script:notify.Dispose()
   }
+  if ($script:popupBitmap) {
+    $script:popupBitmap.Dispose()
+    $script:popupBitmap = $null
+  }
+  if ($script:fontTitle) { $script:fontTitle.Dispose() }
+  if ($script:fontBody) { $script:fontBody.Dispose() }
   Stop-BotProcesses
   if ($mutex) {
     try { $mutex.ReleaseMutex() } catch { }

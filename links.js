@@ -71,12 +71,13 @@ function extractFromUrl(raw) {
 }
 
 function sliceEntity(text, entity) {
-  if (!text || !entity || typeof entity.offset !== "number" || typeof entity.length !== "number") {
+  if (!text || !entity || !Number.isInteger(entity.offset) || !Number.isInteger(entity.length)) {
     return "";
   }
   if (entity.offset < 0 || entity.length <= 0) return "";
   if (entity.offset > text.length) return "";
-  return text.substring(entity.offset, entity.offset + entity.length);
+  const length = Math.min(entity.length, MAX_URL_LEN);
+  return text.substring(entity.offset, entity.offset + length);
 }
 
 function extractFromMessage(msg) {
@@ -91,7 +92,7 @@ function extractFromMessage(msg) {
     if (!entity) continue;
     if (entity.type === "url") {
       chunks.push(sliceEntity(body, entity));
-    } else if (entity.type === "text_link" && typeof entity.url === "string") {
+    } else if (entity.type === "text_link" && typeof entity.url === "string" && entity.url.length <= MAX_URL_LEN) {
       chunks.push(entity.url);
     }
   }

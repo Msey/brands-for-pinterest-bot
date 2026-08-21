@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { CHANNEL, canonicalUrl, isValidPostId } = require("./links");
+const { canonicalUrl, isValidPostId } = require("./links");
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_LINE_LEN = 4096;
@@ -61,6 +61,7 @@ class PostStorage {
     }
     this.path = path.resolve(filePath);
     this.ids = new Set();
+    this._recordsCache = null;
     this._ensureFile();
     this._loadIds();
   }
@@ -89,6 +90,8 @@ class PostStorage {
   }
 
   readRecords() {
+    if (this._recordsCache) return this._recordsCache;
+    this._ensureFile();
     let text = "";
     try {
       const buf = fs.readFileSync(this.path);
@@ -104,6 +107,7 @@ class PostStorage {
       const record = parseRecordLine(trimmed);
       if (record) records.push(record);
     }
+    this._recordsCache = records;
     return records;
   }
 
@@ -132,6 +136,7 @@ class PostStorage {
     }
     fs.appendFileSync(this.path, line, "utf8");
     this.ids.add(id);
+    if (this._recordsCache) this._recordsCache.push(record);
     return true;
   }
 
@@ -148,7 +153,6 @@ class PostStorage {
 }
 
 module.exports = {
-  CHANNEL,
   MAX_FILE_BYTES,
   PostStorage,
   parseRecordLine,
