@@ -11,8 +11,9 @@ const {
   isValidPostId,
 } = require("./links");
 const { PostStorage, parseRecordLine } = require("./storage");
-const { collectPostIds, isJpeg, pinDir } = require("./export-pin");
+const { collectPostIds, formatPinJson, isJpeg, pinDir } = require("./export-pin");
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
+const { buildReplyWithJson } = require("./tg-html");
 
 assert.deepStrictEqual(extractPosts(""), []);
 assert.deepStrictEqual(extractPosts(null), []);
@@ -167,5 +168,25 @@ assert.ok(/pin-templates[/\\]47039$/.test(pinDir(47039)));
 assert.throws(() => pinDir("../etc"));
 assert.ok(isJpeg(Buffer.from([0xff, 0xd8, 0xff, 0x00])));
 assert.ok(!isJpeg(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+
+const builtEmpty = buildReplyWithJson("Сохранил:\nhttps://t.me/kupim_v_usa/1", []);
+assert.strictEqual(builtEmpty.text, "Сохранил:\nhttps://t.me/kupim_v_usa/1");
+assert.deepStrictEqual(builtEmpty.entities, []);
+const built = buildReplyWithJson("Сохранил:\nhttps://t.me/kupim_v_usa/1", [
+  {
+    title: "</code></pre><script>alert(1)</script>",
+    description: "a&b",
+    link: "https://t.me/kupim_v_usa/1",
+  },
+]);
+assert.ok(built.text.startsWith("Сохранил:\nhttps://t.me/kupim_v_usa/1\n\n"));
+assert.ok(built.text.includes('"title": "</code></pre><script>alert(1)</script>"'));
+assert.ok(built.text.includes("a&b"));
+assert.strictEqual(built.entities.length, 1);
+assert.strictEqual(built.entities[0].type, "pre");
+assert.strictEqual(built.entities[0].language, "json");
+assert.strictEqual(built.entities[0].offset, "Сохранил:\nhttps://t.me/kupim_v_usa/1\n\n".length);
+assert.strictEqual(built.entities[0].length, built.text.length - built.entities[0].offset);
+assert.ok(formatPinJson({ title: "x" }).includes('"title": "x"'));
 
 console.log("ok");

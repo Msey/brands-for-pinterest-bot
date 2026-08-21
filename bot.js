@@ -1,15 +1,16 @@
 "use strict";
 
 const path = require("path");
+const fs = require("fs");
 const TelegramBot = require("node-telegram-bot-api");
 const { CHANNEL, extractFromMessage } = require("./links");
 const { PostStorage } = require("./storage");
-const { exportPost } = require("./export-pin");
+const { exportPost, pinDir } = require("./export-pin");
+const { TG_MAX_LEN, buildReplyWithJson } = require("./tg-html");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const LIST_LIMIT = 10;
-const TG_MAX_LEN = 4000;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX = 30;
 
@@ -73,6 +74,31 @@ async function reply(bot, chatId, text) {
   };
   for (let i = 0; i < text.length; i += TG_MAX_LEN) {
     await bot.sendMessage(chatId, text.slice(i, i + TG_MAX_LEN), payload);
+  }
+}
+
+function loadPinFromDisk(postId) {
+  try {
+    const raw = fs.readFileSync(path.join(pinDir(postId), "data.json"), "utf8");
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function replyWithPinJson(bot, chatId, summary, pins) {
+  const payload = buildReplyWithJson(summary, pins);
+  if (!payload.text) return;
+  try {
+    await bot.sendMessage(chatId, payload.text, {
+      disable_web_page_preview: true,
+      entities: payload.entities,
+    });
+  } catch (err) {
+    console.error("reply_json", err && err.message ? err.message : err);
+    await reply(bot, chatId, payload.text);
   }
 }
 
@@ -187,6 +213,7 @@ function main() {
       const added = [];
       const duplicates = [];
       const exportFailed = [];
+      const exportedPins = [];
       const from = msg.from || {};
       for (const { postId, url } of posts) {
         const ok = storage.add({
@@ -197,7 +224,9 @@ function main() {
         });
         (ok ? added : duplicates).push(url);
         try {
-          await exportPost(postId);
+          const result = await exportPost(postId);
+          const pin = (result && result.pin) || loadPinFromDisk(postId);
+          if (pin) exportedPins.push(pin);
         } catch (err) {
           console.error("export_pin", postId, err && err.message ? err.message : err);
           exportFailed.push(String(postId));
@@ -208,7 +237,8 @@ function main() {
       if (added.length) parts.push("Сохранил:\n" + added.join("\n"));
       if (duplicates.length) parts.push("Уже было:\n" + duplicates.join("\n"));
       if (exportFailed.length) parts.push("Не удалось выгрузить фото:\n" + exportFailed.join("\n"));
-      await reply(bot, msg.chat.id, parts.join("\n\n"));
+      const summary = parts.join("\n\n");
+      await replyWithPinJson(bot, msg.chat.id, summary, exportedPins);
     })
   );
 

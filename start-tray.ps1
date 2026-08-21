@@ -358,10 +358,15 @@ function Get-SavedCount {
   return $script:postsCount
 }
 
-function Get-LastSavedUrl {
+function Get-LastSavedLine {
   $lines = @(Get-PostLines)
   if ($lines.Count -eq 0) { return $null }
-  $last = [string]$lines[-1]
+  return [string]$lines[-1]
+}
+
+function Get-LastSavedUrl {
+  $last = Get-LastSavedLine
+  if (-not $last) { return $null }
   if ($last -match '"url"\s*:\s*"([^"]+)"') {
     return $Matches[1]
   }
@@ -472,7 +477,28 @@ function Show-TrayPopup {
 
 function Show-NewLinkBalloon {
   param([int]$Added = 1)
-  $url = Get-LastSavedUrl
+  $line = Get-LastSavedLine
+  $postId = Get-PostIdFromLogLine $line
+  $url = $null
+  if ($line -match '"url"\s*:\s*"([^"]+)"') {
+    $url = $Matches[1]
+  }
+
+  if ($postId) {
+    if ($Added -le 1 -and $url) {
+      $text = "$url`nНажмите, чтобы открыть папку поста."
+    }
+    elseif ($Added -gt 1) {
+      $text = "Сохранено ссылок: $Added`nНажмите, чтобы открыть папку последнего поста."
+    }
+    else {
+      $text = "Пост $postId`nНажмите, чтобы открыть папку поста."
+    }
+    $onClick = { Open-PostFolderById $postId }.GetNewClosure()
+    Show-TrayPopup -Title "Новая ссылка" -Text $text -TimeoutMs $BalloonMs -OnClick $onClick
+    return
+  }
+
   if ($Added -le 1 -and $url) {
     $text = "$url`nНажмите, чтобы открыть папку с базой."
   }
@@ -620,6 +646,19 @@ function Open-FolderUnderRoot([string]$path) {
   return $true
 }
 
+function Open-PostFolderById([string]$postId) {
+  if ($postId -notmatch '^[1-9]\d{0,15}$') { return }
+  $dir = Join-Path $Root (Join-Path "pin-templates" $postId)
+  if (Open-FolderUnderRoot $dir) { return }
+  $deadline = [datetime]::UtcNow.AddSeconds(2)
+  while ([datetime]::UtcNow -lt $deadline) {
+    Start-Sleep -Milliseconds 250
+    if (Open-FolderUnderRoot $dir) { return }
+  }
+  Add-ConsoleNote "нет папки поста $postId"
+  Update-LogList
+}
+
 function Open-DataFolder {
   $data = Split-Path -Parent $PostsFile
   New-Item -ItemType Directory -Force -Path $data | Out-Null
@@ -627,13 +666,7 @@ function Open-DataFolder {
 }
 
 function Open-PostFolderFromLogLine([string]$line) {
-  $postId = Get-PostIdFromLogLine $line
-  if (-not $postId) { return }
-  $dir = Join-Path $Root (Join-Path "pin-templates" $postId)
-  if (-not (Open-FolderUnderRoot $dir)) {
-    Add-ConsoleNote "нет папки поста $postId"
-    Update-LogList
-  }
+  Open-PostFolderById (Get-PostIdFromLogLine $line)
 }
 
 function Add-ConsoleNote([string]$text) {

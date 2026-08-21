@@ -13,6 +13,10 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 
+function formatPinJson(pin) {
+  return JSON.stringify(pin, null, 2) + "\n";
+}
+
 function pinDir(postId) {
   const id = String(postId);
   if (!/^\d{1,16}$/.test(id)) {
@@ -166,9 +170,9 @@ async function exportPost(postId) {
   }
   const dir = pinDir(postId);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(pin, null, 2) + "\n", "utf8");
+  fs.writeFileSync(path.join(dir, "data.json"), formatPinJson(pin), "utf8");
   fs.writeFileSync(path.join(dir, "image.jpg"), image);
-  return dir;
+  return { dir, pin };
 }
 
 async function main(argv) {
@@ -180,8 +184,8 @@ async function main(argv) {
   let failed = 0;
   for (const postId of ids) {
     try {
-      const dir = await exportPost(postId);
-      console.log("OK", postId, dir);
+      const result = await exportPost(postId);
+      console.log("OK", postId, result.dir);
     } catch (err) {
       failed += 1;
       console.error("FAIL", postId, err && err.message ? err.message : err);
@@ -200,6 +204,7 @@ if (require.main === module) {
 module.exports = {
   collectPostIds,
   exportPost,
+  formatPinJson,
   isJpeg,
   pinDir,
 };
