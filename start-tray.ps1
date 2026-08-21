@@ -347,10 +347,7 @@ function Show-TrayPopup {
     $pic.Size = New-Object System.Drawing.Size(32, 32)
     $pic.Location = New-Object System.Drawing.Point(12, 14)
     $pic.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-    if (-not $script:popupBitmap) {
-      $script:popupBitmap = $script:icon.ToBitmap()
-    }
-    $pic.Image = $script:popupBitmap
+    $pic.Image = Get-PopupBitmap
     $pic.Cursor = [System.Windows.Forms.Cursors]::Hand
     $pic.Add_Click($click)
     $form.Controls.Add($pic)
@@ -584,13 +581,51 @@ function Get-AppIcon {
   $icoPath = Join-Path $Root "icon.ico"
   if (Test-Path -LiteralPath $icoPath) {
     try {
-      return New-Object System.Drawing.Icon -ArgumentList $icoPath
+      return New-Object System.Drawing.Icon -ArgumentList $icoPath, 32, 32
     }
-    catch {
-      return [System.Drawing.SystemIcons]::Application
-    }
+    catch { }
   }
   return [System.Drawing.SystemIcons]::Application
+}
+
+function Get-PopupBitmap {
+  if ($script:popupBitmap) { return $script:popupBitmap }
+
+  $pngPath = Join-Path $Root "icon.png"
+  if (Test-Path -LiteralPath $pngPath) {
+    $bytes = [System.IO.File]::ReadAllBytes($pngPath)
+    $stream = New-Object System.IO.MemoryStream(,$bytes)
+    try {
+      $source = [System.Drawing.Image]::FromStream($stream)
+      try {
+        $bmp = New-Object System.Drawing.Bitmap 32, 32
+        $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+        try {
+          $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+          $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+          $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+          $graphics.Clear([System.Drawing.Color]::Transparent)
+          $graphics.DrawImage($source, 0, 0, 32, 32)
+        }
+        finally {
+          $graphics.Dispose()
+        }
+        $script:popupBitmap = $bmp
+      }
+      finally {
+        $source.Dispose()
+      }
+    }
+    finally {
+      $stream.Dispose()
+    }
+    return $script:popupBitmap
+  }
+
+  if ($script:icon) {
+    $script:popupBitmap = $script:icon.ToBitmap()
+  }
+  return $script:popupBitmap
 }
 
 function Add-TrayMenuItem {
