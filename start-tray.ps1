@@ -131,9 +131,17 @@ function Exit-App {
   [System.Windows.Forms.Application]::Exit()
 }
 
+function Get-AppIcon {
+  $icoPath = Join-Path $Root "icon.ico"
+  if (Test-Path -LiteralPath $icoPath) {
+    return New-Object System.Drawing.Icon -ArgumentList $icoPath
+  }
+  return [System.Drawing.SystemIcons]::Application
+}
+
 Start-BotProcess
 
-$icon = [System.Drawing.SystemIcons]::Application
+$script:icon = Get-AppIcon
 
 $script:form = New-Object System.Windows.Forms.Form
 $script:form.Text = "Бот kupim_v_usa"
@@ -143,7 +151,7 @@ $script:form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSing
 $script:form.MaximizeBox = $false
 $script:form.MinimizeBox = $true
 $script:form.ShowInTaskbar = $false
-$script:form.Icon = $icon
+$script:form.Icon = $script:icon
 $script:form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 
 $script:statusLabel = New-Object System.Windows.Forms.Label
@@ -188,7 +196,7 @@ $script:form.Add_FormClosing({
 }) | Out-Null
 
 $script:notify = New-Object System.Windows.Forms.NotifyIcon
-$script:notify.Icon = $icon
+$script:notify.Icon = $script:icon
 $script:notify.Visible = $true
 $script:notify.Text = "Бот kupim_v_usa"
 
