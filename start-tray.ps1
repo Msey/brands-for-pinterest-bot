@@ -586,16 +586,54 @@ function Hide-MainWindow {
   }
 }
 
+function Get-PostIdFromLogLine([string]$line) {
+  if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+  $token = $null
+  if ($line -match '"post_id"\s*:\s*(\d{1,16})\b') {
+    $token = $Matches[1]
+  }
+  elseif ($line -match 'https://t\.me/kupim_v_usa/(\d{1,16})(?:\D|$)') {
+    $token = $Matches[1]
+  }
+  if (-not $token -or $token -notmatch '^[1-9]\d{0,15}$') { return $null }
+  return $token
+}
+
+function Open-FolderUnderRoot([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+  try {
+    $full = [System.IO.Path]::GetFullPath($path)
+  }
+  catch {
+    return $false
+  }
+  $rootFull = [System.IO.Path]::GetFullPath($Root)
+  $prefix = $rootFull.TrimEnd('\') + '\'
+  if (-not (
+    $full.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+    $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+  )) {
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $full -PathType Container)) { return $false }
+  Start-Process -FilePath explorer.exe -ArgumentList ('"' + $full + '"')
+  return $true
+}
+
 function Open-DataFolder {
   $data = Split-Path -Parent $PostsFile
   New-Item -ItemType Directory -Force -Path $data | Out-Null
-  $full = [System.IO.Path]::GetFullPath($data)
-  $rootFull = [System.IO.Path]::GetFullPath($Root)
-  $prefix = $rootFull.TrimEnd('\') + '\'
-  if (-not ($full.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))) {
-    return
+  [void](Open-FolderUnderRoot $data)
+}
+
+function Open-PostFolderFromLogLine([string]$line) {
+  $postId = Get-PostIdFromLogLine $line
+  if (-not $postId) { return }
+  $dir = Join-Path $Root (Join-Path "pin-templates" $postId)
+  if (-not (Open-FolderUnderRoot $dir)) {
+    Add-ConsoleNote "нет папки поста $postId"
+    Update-LogList
   }
-  Start-Process explorer.exe -ArgumentList $full
 }
 
 function Add-ConsoleNote([string]$text) {
@@ -750,6 +788,10 @@ $script:logList.Font = New-Object System.Drawing.Font("Consolas", 9)
 $script:logList.BackColor = [System.Drawing.Color]::FromArgb(1, 36, 86)
 $script:logList.ForeColor = [System.Drawing.Color]::White
 $script:logList.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$script:logList.Add_DoubleClick({
+  if ($null -eq $script:logList.SelectedItem) { return }
+  Open-PostFolderFromLogLine ([string]$script:logList.SelectedItem)
+}) | Out-Null
 
 $btnFolder = New-Object System.Windows.Forms.Button
 $btnFolder.Location = New-Object System.Drawing.Point(20, 368)
