@@ -2,8 +2,13 @@
 using System;
 using System.Runtime.InteropServices;
 public class KupimBotWin32 {
+  public const int SW_RESTORE = 9;
   [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 }
 "@
 $console = [KupimBotWin32]::GetConsoleWindow()
@@ -35,6 +40,7 @@ $Root = $PSScriptRoot
 Set-Location -LiteralPath $Root
 
 $AppTitle = "Бот kupim_v_usa"
+try { $Host.UI.RawUI.WindowTitle = $AppTitle } catch { }
 $RecentLimit = 20
 $BalloonMs = 15000
 $MaxFileBytes = 8MB
@@ -61,21 +67,61 @@ $script:popupBitmap = $null
 $script:fontTitle = $null
 $script:fontBody = $null
 $script:watchHandler = $null
+$script:activateEvent = $null
+$script:activateTimer = $null
 
-. (Join-Path $Root "install-desktop-shortcut.ps1")
-Install-KupimDesktopShortcut -Root $Root
+$MutexName = "Local\TelegramKupimBotTray"
+$ActivateEventName = "Local\TelegramKupimBotTrayActivate"
 
-$mutex = New-Object System.Threading.Mutex($false, "Local\TelegramKupimBotTray")
+function Restore-ExistingTrayWindow {
+  try {
+    $ev = [System.Threading.EventWaitHandle]::OpenExisting($ActivateEventName)
+    try {
+      [void]$ev.Set()
+    }
+    finally {
+      $ev.Close()
+    }
+  }
+  catch { }
+
+  $others = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -match 'start-tray\.ps1' -and $_.ProcessId -ne $PID })
+  foreach ($proc in $others) {
+    try {
+      [void][KupimBotWin32]::AllowSetForegroundWindow([int]$proc.ProcessId)
+      $handle = [IntPtr](Get-Process -Id $proc.ProcessId -ErrorAction Stop).MainWindowHandle
+      if ($handle -ne [IntPtr]::Zero) {
+        [void][KupimBotWin32]::ShowWindow($handle, [KupimBotWin32]::SW_RESTORE)
+        [void][KupimBotWin32]::SetForegroundWindow($handle)
+        return
+      }
+    }
+    catch { }
+  }
+
+  $found = [KupimBotWin32]::FindWindow($null, $AppTitle)
+  if ($found -ne [IntPtr]::Zero) {
+    [void][KupimBotWin32]::ShowWindow($found, [KupimBotWin32]::SW_RESTORE)
+    [void][KupimBotWin32]::SetForegroundWindow($found)
+  }
+}
+
+$mutex = New-Object System.Threading.Mutex($false, $MutexName)
 if (-not $mutex.WaitOne(0, $false)) {
-  [System.Windows.Forms.MessageBox]::Show(
-    "Бот уже работает в трее (рядом с часами). Откройте окно двойным щелчком по иконке.",
-    $AppTitle,
-    [System.Windows.Forms.MessageBoxButtons]::OK,
-    [System.Windows.Forms.MessageBoxIcon]::Information
-  ) | Out-Null
+  Restore-ExistingTrayWindow
   $mutex.Dispose()
   exit 0
 }
+
+$script:activateEvent = New-Object System.Threading.EventWaitHandle(
+  $false,
+  [System.Threading.EventResetMode]::AutoReset,
+  $ActivateEventName
+)
+
+. (Join-Path $Root "install-desktop-shortcut.ps1")
+Install-KupimDesktopShortcut -Root $Root
 
 function Show-AppMessage {
   param(
@@ -427,9 +473,18 @@ function Update-WindowStatus {
   else {
     $script:countLabel.Text = "Сохранено ссылок: $count"
   }
-  if ($script:form -and $script:form.Visible) {
+  if (Test-MainWindowOpen) {
     Update-LogList
   }
+}
+
+function Test-MainWindowOpen {
+  return [bool](
+    $script:form -and
+    -not $script:form.IsDisposed -and
+    $script:form.Visible -and
+    $script:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal
+  )
 }
 
 function Show-MainWindow {
@@ -441,11 +496,19 @@ function Show-MainWindow {
   Update-WindowStatus
   $script:form.Activate()
   [void]$script:form.BringToFront()
+  $hwnd = $script:form.Handle
+  if ($hwnd -ne [IntPtr]::Zero) {
+    [void][KupimBotWin32]::ShowWindow($hwnd, [KupimBotWin32]::SW_RESTORE)
+    [void][KupimBotWin32]::SetForegroundWindow($hwnd)
+  }
 }
 
 function Hide-MainWindow {
-  $script:form.Hide()
-  $script:form.ShowInTaskbar = $false
+  $script:form.ShowInTaskbar = $true
+  $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
+  if (-not $script:form.Visible) {
+    $script:form.Show()
+  }
 }
 
 function Open-DataFolder {
@@ -550,7 +613,8 @@ $script:form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScr
 $script:form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
 $script:form.MaximizeBox = $false
 $script:form.MinimizeBox = $true
-$script:form.ShowInTaskbar = $false
+$script:form.ShowInTaskbar = $true
+$script:form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
 $script:form.Icon = $script:icon
 $script:form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 
@@ -621,6 +685,15 @@ $dataDir = Split-Path -Parent $PostsFile
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 $null = $script:form.Handle
 
+$script:activateTimer = New-Object System.Windows.Forms.Timer
+$script:activateTimer.Interval = 200
+$script:activateTimer.Add_Tick({
+  if ($script:activateEvent -and $script:activateEvent.WaitOne(0)) {
+    Show-MainWindow
+  }
+}) | Out-Null
+$script:activateTimer.Start()
+
 $script:watchDebounce = New-Object System.Windows.Forms.Timer
 $script:watchDebounce.Interval = 400
 $script:watchDebounce.Add_Tick({
@@ -659,6 +732,7 @@ $script:timer.Add_Tick({
 }) | Out-Null
 $script:timer.Start()
 
+Hide-MainWindow
 Show-TrayPopup -Title $AppTitle -Text "Бот в трее. Двойной щелчок по иконке открывает окно." -TimeoutMs 4000
 
 $appContext = New-Object System.Windows.Forms.ApplicationContext
@@ -668,6 +742,14 @@ try {
 finally {
   if ($script:popupTimer -or $script:popupForm) {
     Close-TrayPopup
+  }
+  if ($script:activateTimer) {
+    $script:activateTimer.Stop()
+    $script:activateTimer.Dispose()
+  }
+  if ($script:activateEvent) {
+    $script:activateEvent.Dispose()
+    $script:activateEvent = $null
   }
   if ($script:watchDebounce) {
     $script:watchDebounce.Stop()

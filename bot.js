@@ -117,6 +117,7 @@ function main() {
     console.error("Нет корректного BOT_TOKEN. Скопируйте .env.example в .env и впишите токен.");
     process.exit(1);
   }
+  process.title = "Бот kupim_v_usa";
 
   const bot = new TelegramBot(token, { polling: true });
 
