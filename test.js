@@ -202,6 +202,11 @@ const htmlDress = `<b>Unknown Brand</b> 🇺🇸<br><br><a href="https://www.exa
 const pinDress = parseCaptionHtml(htmlDress, { postId: 13 });
 assert.ok(pinDress.description.includes("капсульный гардероб"));
 
+const htmlArmani = `<b>Armani</b> 🇺🇸<br><br><a href="https://www.giorgioarmanibeauty-usa.com/p/f">Тональная основа для лица</a><br>ID: <code>4</code>`;
+const pinArmani = parseCaptionHtml(htmlArmani, { postId: 14 });
+assert.ok(pinArmani.description.includes("тональная основа Armani"));
+assert.strictEqual(pinArmani.board, BOARDS.cosmetics);
+
 assert.ok(
   inferDescription({
     brand: "Adidas",

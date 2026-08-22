@@ -239,6 +239,14 @@ const DESCRIPTIONS = Object.freeze([
       "Rhode, косметика Rhode, уход за кожей Rhode, бальзам Rhode, пептидные бальзамы Rhode, прозрачные бальзамы Rhode, румяна Rhode, минималистичная косметика Rhode, косметика Хейли Бибер, блеск для губ Rhode, корректор Rhode, косметика с пептидами Rhode, купить Rhode в России, Rhode доставка в Россию, оригинальная косметика Rhode, Rhode отзывы, rhode макияж, карандаш для губ Rhode, блеск для губ Rhode, Rhode уход за кожей, Rhode blush, Rhode beauty, Hailey Bieber Rhode, Rhode makeup, Rhode бьюти, Rhode girl aesthetic, Rhode sleepy girl blush, чехол Rhode, чехол для телефона Rhode, чехол для айфона Rhode",
   },
   {
+    id: "armani-cosmetics",
+    brands: ["giorgio armani", "armani beauty", "armani", "джорджио армани", "армани"],
+    boardKinds: ["косметика"],
+    cta: "Где купить? Жми «Открыть веб-сайт», вся информация в канале!",
+    keywords:
+      "косметика Armani, Giorgio Armani Beauty, тональная основа Armani, тональный крем Armani, Armani Luminous Silk, Armani Power Fabric, Armani Maestro, Armani foundation, консилер Armani, пудра Armani, макияж Armani, уход за кожей Armani, Armani beauty, джорджио армани косметика, оригинальная косметика Armani, купить Armani косметику, тональная основа для лица Armani, люминос силк, армани макияж, косметика из сша, уход за лицом, тональный крем, Giorgio Armani makeup, Armani Cosmetics, сияющая кожа, макияж 2026, брендовая косметика, косметика для лица",
+  },
+  {
     id: "ugg",
     brands: ["ugg"],
     keywords:
@@ -317,6 +325,7 @@ const DESCRIPTIONS = Object.freeze([
       "румяна",
       "блеск",
       "тональный",
+      "тональная",
       "бальзам",
       "косметика",
       "макияж",

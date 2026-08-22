@@ -41,6 +41,8 @@ const TYPE_RULES = [
   { match: /^панама(?:\s|$)/i, type: "панама", category: "аксессуары", boardKind: "аксессуары" },
   { match: /^термос(?:\s|$)/i, type: "термос", category: "аксессуары", boardKind: "аксессуары" },
   { match: /^термокружка(?:\s|$)/i, type: "термос", category: "аксессуары", boardKind: "аксессуары" },
+  { match: /^тональная\s+основа(?:\s|$)/i, type: "тональная основа", category: "косметика", boardKind: "косметика" },
+  { match: /^тональный\s+крем(?:\s|$)/i, type: "тональный крем", category: "косметика", boardKind: "косметика" },
 ];
 
 const MODEL_SKIP = /^(высокие|низкие|кожаные|слева|справа)(?:\s|$)/i;
