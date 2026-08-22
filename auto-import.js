@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const { canonicalUrl, isValidPostId } = require("./links");
-const { exportPost } = require("./export-pin");
+const { exportPost, pruneOldPinDirs } = require("./export-pin");
 const {
   PREVIEW_WINDOW,
   fetchLatestPostId,
@@ -65,6 +65,20 @@ async function resolveLatestId(state, fetchHtml) {
   return latest;
 }
 
+function pruneAfterImport(prune, createdId) {
+  try {
+    const pruned = prune({ keepIds: createdId != null ? [createdId] : [] });
+    const removed = pruned && Array.isArray(pruned.removed) ? pruned.removed : [];
+    if (removed.length) {
+      console.log("auto: удалены старые папки", removed.join(", "));
+    }
+    return removed;
+  } catch (err) {
+    console.error("auto_prune", err && err.message ? err.message : err);
+    return [];
+  }
+}
+
 async function runAutoImport(options) {
   const storage = options && options.storage;
   const state = options && options.state;
@@ -77,35 +91,52 @@ async function runAutoImport(options) {
     return { ok: false, reason: "no_state" };
   }
 
-  const latest = await resolveLatestId(state, fetchHtml);
-  if (!isValidPostId(latest)) {
-    console.log("auto: нет latest id");
-    return { ok: false, reason: "no_latest" };
-  }
+  const prune =
+    options && typeof options.pruneOldPinDirs === "function"
+      ? options.pruneOldPinDirs
+      : pruneOldPinDirs;
+  let createdId = null;
+  const result = { ok: false, reason: "attempts_failed" };
 
-  const candidates = listRecentCandidateIds(latest, PREVIEW_WINDOW);
-  const tried = new Set();
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const postId = pickUnusedId(candidates, storage, Math.random, tried);
-    if (postId == null) {
-      console.log("auto: нет свободных id в окне");
-      return { ok: false, reason: "exhausted" };
+  try {
+    const latest = await resolveLatestId(state, fetchHtml);
+    if (!isValidPostId(latest)) {
+      console.log("auto: нет latest id");
+      result.reason = "no_latest";
+      return result;
     }
-    tried.add(postId);
-    try {
-      const result = await exportFn(postId);
-      const added = storage.add({
-        url: canonicalUrl(postId),
-        postId,
-      });
-      if (!added) continue;
-      console.log("auto: сохранён", postId);
-      return { ok: true, postId, pin: result && result.pin };
-    } catch (err) {
-      console.error("auto_export", postId, err && err.message ? err.message : err);
+
+    const candidates = listRecentCandidateIds(latest, PREVIEW_WINDOW);
+    const tried = new Set();
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      const postId = pickUnusedId(candidates, storage, Math.random, tried);
+      if (postId == null) {
+        console.log("auto: нет свободных id в окне");
+        result.reason = "exhausted";
+        return result;
+      }
+      tried.add(postId);
+      try {
+        const exported = await exportFn(postId);
+        const added = storage.add({
+          url: canonicalUrl(postId),
+          postId,
+        });
+        if (!added) continue;
+        createdId = postId;
+        result.ok = true;
+        delete result.reason;
+        result.postId = postId;
+        result.pin = exported && exported.pin;
+        return result;
+      } catch (err) {
+        console.error("auto_export", postId, err && err.message ? err.message : err);
+      }
     }
+    return result;
+  } finally {
+    result.pruned = pruneAfterImport(prune, createdId);
   }
-  return { ok: false, reason: "attempts_failed" };
 }
 
 module.exports = {

@@ -431,20 +431,22 @@ function bestMatch(entries, ctx) {
   return hits[0];
 }
 
+const BRANDED_RULES = DESCRIPTIONS.filter(hasBrandConstraint);
+const GENERIC_RULES = DESCRIPTIONS.filter((entry) => !hasBrandConstraint(entry));
+const BRANDED_ALIASES = BRANDED_RULES.flatMap((entry) => entry.brands);
+
 function inferDescription({ brand, product, audience } = {}) {
   const ctx = {
     brand: brand || "",
     product: product || {},
     audienceKey: audience && audience.key,
   };
-  const branded = DESCRIPTIONS.filter(hasBrandConstraint);
-  const generic = DESCRIPTIONS.filter((entry) => !hasBrandConstraint(entry));
-  const brandedHit = bestMatch(branded, ctx);
+  const brandedHit = bestMatch(BRANDED_RULES, ctx);
   if (brandedHit) return formatDescription(brandedHit);
-  if (brandMatches(ctx.brand, branded.flatMap((entry) => entry.brands))) {
+  if (brandMatches(ctx.brand, BRANDED_ALIASES)) {
     return MISSING_DESCRIPTION;
   }
-  const genericHit = bestMatch(generic, ctx);
+  const genericHit = bestMatch(GENERIC_RULES, ctx);
   if (genericHit) return formatDescription(genericHit);
   return MISSING_DESCRIPTION;
 }

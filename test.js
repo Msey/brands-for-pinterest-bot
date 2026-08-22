@@ -11,7 +11,14 @@ const {
   isValidPostId,
 } = require("./links");
 const { PostStorage, parseRecordLine } = require("./storage");
-const { collectPostIds, formatPinJson, isJpeg, pinDir } = require("./export-pin");
+const {
+  collectPostIds,
+  formatPinJson,
+  isJpeg,
+  pinDir,
+  PIN_DIR_MAX_PRUNE,
+  pruneOldPinDirs,
+} = require("./export-pin");
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
 const { BOARDS } = require("./boards");
@@ -249,6 +256,71 @@ assert.strictEqual(Object.keys(BOARDS).length, 12);
 assert.deepStrictEqual(collectPostIds(["https://t.me/kupim_v_usa/47039", "47039", "abc"]), [47039]);
 assert.ok(/pin-templates[/\\]47039$/.test(pinDir(47039)));
 assert.throws(() => pinDir("../etc"));
+
+const pruneRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-prune-"));
+const oldDir = path.join(pruneRoot, "11");
+const freshDir = path.join(pruneRoot, "12");
+const keepDir = path.join(pruneRoot, "13");
+const otherDir = path.join(pruneRoot, "notes");
+fs.mkdirSync(oldDir);
+fs.mkdirSync(freshDir);
+fs.mkdirSync(keepDir);
+fs.mkdirSync(otherDir);
+fs.writeFileSync(path.join(oldDir, "data.json"), "{}\n");
+fs.writeFileSync(path.join(otherDir, "keep.txt"), "x");
+const now = Date.now();
+fs.utimesSync(oldDir, new Date(now - 6 * 60 * 60 * 1000), new Date(now - 6 * 60 * 60 * 1000));
+fs.utimesSync(keepDir, new Date(now - 6 * 60 * 60 * 1000), new Date(now - 6 * 60 * 60 * 1000));
+const pruned = pruneOldPinDirs({
+  root: pruneRoot,
+  now,
+  maxAgeMs: 5 * 60 * 60 * 1000,
+  keepIds: [13],
+});
+assert.deepStrictEqual(pruned.removed, [11]);
+assert.ok(!fs.existsSync(oldDir));
+assert.ok(fs.existsSync(freshDir));
+assert.ok(fs.existsSync(keepDir));
+assert.ok(fs.existsSync(otherDir));
+assert.deepStrictEqual(
+  pruneOldPinDirs({ root: pruneRoot, now, keepIds: { 13: true } }).removed,
+  [13]
+);
+assert.throws(() => pruneOldPinDirs({ root: "" }));
+assert.throws(() => pruneOldPinDirs({ root: 1 }));
+const outside = path.join(pruneRoot, "outside-target");
+const linkDir = path.join(pruneRoot, "14");
+fs.mkdirSync(outside);
+try {
+  fs.symlinkSync(outside, linkDir, process.platform === "win32" ? "junction" : "dir");
+} catch {
+  /* no symlink permission */
+}
+if (fs.existsSync(linkDir)) {
+  try {
+    fs.utimesSync(linkDir, new Date(now - 6 * 60 * 60 * 1000), new Date(now - 6 * 60 * 60 * 1000));
+  } catch {
+    /* junction mtime may be immutable */
+  }
+  pruneOldPinDirs({
+    root: pruneRoot,
+    now,
+    maxAgeMs: 5 * 60 * 60 * 1000,
+  });
+  assert.ok(fs.existsSync(outside));
+}
+const capRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-prune-cap-"));
+for (let i = 1; i <= PIN_DIR_MAX_PRUNE + 2; i++) {
+  const dir = path.join(capRoot, String(i));
+  fs.mkdirSync(dir);
+  fs.utimesSync(dir, new Date(now - 6 * 60 * 60 * 1000), new Date(now - 6 * 60 * 60 * 1000));
+}
+assert.strictEqual(
+  pruneOldPinDirs({ root: capRoot, now, maxAgeMs: 5 * 60 * 60 * 1000 }).removed.length,
+  PIN_DIR_MAX_PRUNE
+);
+fs.rmSync(capRoot, { recursive: true, force: true });
+fs.rmSync(pruneRoot, { recursive: true, force: true });
 assert.ok(isJpeg(Buffer.from([0xff, 0xd8, 0xff, 0x00])));
 assert.ok(!isJpeg(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
 
@@ -313,10 +385,12 @@ runAutoImport({
     if (id === 20) throw new Error("нет фото");
     return { pin: { title: String(id) } };
   },
+  pruneOldPinDirs: () => ({ removed: [11] }),
 }).then((result) => {
   assert.strictEqual(result.ok, true);
   assert.ok(result.postId !== 20);
   assert.ok(addedIds.includes(result.postId));
+  assert.deepStrictEqual(result.pruned, [11]);
   fs.rmSync(autoDir, { recursive: true, force: true });
   console.log("ok");
 }).catch((err) => {

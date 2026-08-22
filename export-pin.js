@@ -17,12 +17,101 @@ function formatPinJson(pin) {
   return JSON.stringify(pin, null, 2) + "\n";
 }
 
+const PIN_DIR_MAX_AGE_MS = 5 * 60 * 60 * 1000;
+const PIN_DIR_MAX_PRUNE = 32;
+const PIN_DIR_ID = /^\d{1,16}$/;
+
+function pinTemplatesRoot() {
+  return path.join(__dirname, "pin-templates");
+}
+
 function pinDir(postId) {
   const id = String(postId);
-  if (!/^\d{1,16}$/.test(id)) {
+  if (!PIN_DIR_ID.test(id)) {
     throw new Error("Некорректный id поста");
   }
-  return path.join(__dirname, "pin-templates", id);
+  return path.join(pinTemplatesRoot(), id);
+}
+
+function samePath(a, b) {
+  if (process.platform === "win32") {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
+}
+
+function isInsideRoot(root, target) {
+  const rootFull = path.resolve(root);
+  const targetFull = path.resolve(target);
+  if (samePath(targetFull, rootFull)) return true;
+  const prefix = rootFull.endsWith(path.sep) ? rootFull : rootFull + path.sep;
+  if (process.platform === "win32") {
+    return targetFull.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return targetFull.startsWith(prefix);
+}
+
+function resolvePruneRoot(options) {
+  if (!options || options.root == null) return pinTemplatesRoot();
+  if (typeof options.root !== "string" || !options.root.trim()) {
+    throw new Error("Некорректный путь prune");
+  }
+  return path.resolve(options.root);
+}
+
+function isLinkLike(dir, st) {
+  if (st.isSymbolicLink()) return true;
+  try {
+    fs.readlinkSync(dir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pruneOldPinDirs(options) {
+  const now = options && Number.isFinite(options.now) ? options.now : Date.now();
+  const maxAgeMs =
+    options && Number.isFinite(options.maxAgeMs) && options.maxAgeMs >= 0
+      ? options.maxAgeMs
+      : PIN_DIR_MAX_AGE_MS;
+  const root = resolvePruneRoot(options);
+  const keepIds = new Set(
+    (options && Array.isArray(options.keepIds) ? options.keepIds : [])
+      .map((id) => String(id))
+      .filter((id) => PIN_DIR_ID.test(id))
+  );
+  const removed = [];
+  let names;
+  try {
+    names = fs.readdirSync(root);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { removed };
+    throw err;
+  }
+  for (const name of names) {
+    if (removed.length >= PIN_DIR_MAX_PRUNE) break;
+    if (!PIN_DIR_ID.test(name) || keepIds.has(name)) continue;
+    const dir = path.join(root, name);
+    if (!isInsideRoot(root, dir)) continue;
+    let st;
+    try {
+      st = fs.lstatSync(dir);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory() || isLinkLike(dir, st)) continue;
+    if (now - st.mtimeMs < maxAgeMs) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      console.error("prune_pin", name, err && err.message ? err.message : err);
+      continue;
+    }
+    const id = Number(name);
+    removed.push(Number.isSafeInteger(id) ? id : name);
+  }
+  return { removed };
 }
 
 function jsonlPath() {
@@ -99,7 +188,13 @@ function fetchBufferFollow(url, maxBytes, redirects) {
 }
 
 function isJpeg(buffer) {
-  return Buffer.isBuffer(buffer) && buffer.length >= 3 && buffer.slice(0, 3).equals(JPEG_MAGIC);
+  return (
+    Buffer.isBuffer(buffer) &&
+    buffer.length >= 3 &&
+    buffer[0] === JPEG_MAGIC[0] &&
+    buffer[1] === JPEG_MAGIC[1] &&
+    buffer[2] === JPEG_MAGIC[2]
+  );
 }
 
 function collectPostIds(argv) {
@@ -202,10 +297,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  PIN_DIR_MAX_AGE_MS,
+  PIN_DIR_MAX_PRUNE,
   collectPostIds,
   exportPost,
   fetchBuffer,
   formatPinJson,
   isJpeg,
   pinDir,
+  pruneOldPinDirs,
 };
