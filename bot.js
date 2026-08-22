@@ -7,12 +7,17 @@ const { CHANNEL, extractFromMessage } = require("./links");
 const { PostStorage } = require("./storage");
 const { exportPost, pinDir } = require("./export-pin");
 const { TG_MAX_LEN, buildReplyWithJson } = require("./tg-html");
+const { postIdFromChannelPost } = require("./channel-feed");
+const { loadAutoState, rememberLatestId, runAutoImport, saveAutoState } = require("./auto-import");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const LIST_LIMIT = 10;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX = 30;
+const AUTO_INTERVAL_MS = 60 * 60 * 1000;
+const AUTO_FIRST_DELAY_MS = 60 * 1000;
+const AUTO_STATE_FILE = path.join(__dirname, "data", "auto.json");
 
 function parseAllowList(raw) {
   if (!raw || !String(raw).trim()) return null;
@@ -65,6 +70,13 @@ function isValidBotToken(token) {
 function commandPattern(name) {
   const safe = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^/${safe}(?:@\\w+)?(?:\\s|$)`, "i");
+}
+
+function parseAutoArg(text) {
+  const match = /^\/auto(?:@\w+)?(?:\s+(\S+))?/i.exec(String(text || "").trim());
+  const arg = match && match[1] ? String(match[1]).toLowerCase() : "";
+  if (arg === "on" || arg === "off") return arg;
+  return "";
 }
 
 async function reply(bot, chatId, text) {
@@ -146,7 +158,37 @@ function main() {
   }
   process.title = "Бот kupim_v_usa";
 
-  const bot = new TelegramBot(token, { polling: true });
+  const autoState = loadAutoState(AUTO_STATE_FILE);
+  let autoRunning = false;
+
+  function persistAutoState() {
+    try {
+      saveAutoState(autoState, AUTO_STATE_FILE);
+    } catch (err) {
+      console.error("auto_state", err && err.message ? err.message : err);
+    }
+  }
+
+  async function tickAutoImport() {
+    if (!autoState.enabled || autoRunning) return;
+    autoRunning = true;
+    try {
+      await runAutoImport({ storage, state: autoState, exportPost });
+      persistAutoState();
+    } catch (err) {
+      console.error("auto", err && err.message ? err.message : err);
+    } finally {
+      autoRunning = false;
+    }
+  }
+
+  const bot = new TelegramBot(token, {
+    polling: {
+      params: {
+        allowed_updates: ["message", "channel_post"],
+      },
+    },
+  });
 
   bot.onText(
     commandPattern("start"),
@@ -165,7 +207,8 @@ function main() {
           CHANNEL +
           "/123\n\n" +
           "/list — последние 10 ссылок\n" +
-          "/count — сколько уже сохранено"
+          "/count — сколько уже сохранено\n" +
+          "/auto — автоимпорт случайного поста раз в час"
       );
     })
   );
@@ -187,6 +230,26 @@ function main() {
     commandPattern("count"),
     onPrivate(bot, async (msg) => {
       await reply(bot, msg.chat.id, `Сохранено: ${storage.count(msg.from && msg.from.id)}`);
+    })
+  );
+
+  bot.onText(
+    commandPattern("auto"),
+    onPrivate(bot, async (msg) => {
+      const arg = parseAutoArg(msg.text);
+      if (arg === "on") autoState.enabled = true;
+      if (arg === "off") autoState.enabled = false;
+      if (arg) persistAutoState();
+      const status = autoState.enabled ? "включён" : "выключен";
+      const latest = autoState.latestId ? `, последний id канала ${autoState.latestId}` : "";
+      await reply(
+        bot,
+        msg.chat.id,
+        "Автоимпорт " +
+          status +
+          latest +
+          ".\nРаз в час беру случайный пост из последних 100.\n/auto on — включить\n/auto off — выключить"
+      );
     })
   );
 
@@ -242,9 +305,21 @@ function main() {
     })
   );
 
+  bot.on("channel_post", (msg) => {
+    const postId = postIdFromChannelPost(msg);
+    if (postId == null) return;
+    rememberLatestId(autoState, postId);
+    persistAutoState();
+  });
+
   bot.on("polling_error", (err) => {
     console.error("polling_error:", err && err.message ? err.message : err);
   });
+
+  setTimeout(() => {
+    tickAutoImport();
+    setInterval(tickAutoImport, AUTO_INTERVAL_MS);
+  }, AUTO_FIRST_DELAY_MS);
 
   console.log("Бот запущен, жду сообщения в личке");
 }

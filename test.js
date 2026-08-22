@@ -15,6 +15,15 @@ const { collectPostIds, formatPinJson, isJpeg, pinDir } = require("./export-pin"
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
 const { BOARDS } = require("./boards");
+const {
+  isOurChannelPost,
+  listRecentCandidateIds,
+  maxPreviewPostId,
+  parsePreviewPostIds,
+  pickUnusedId,
+  postIdFromChannelPost,
+} = require("./channel-feed");
+const { loadAutoState, rememberLatestId, runAutoImport, sanitizeState } = require("./auto-import");
 
 assert.deepStrictEqual(extractPosts(""), []);
 assert.deepStrictEqual(extractPosts(null), []);
@@ -204,4 +213,55 @@ assert.strictEqual(built.entities[0].offset, "Сохранил:\nhttps://t.me/ku
 assert.strictEqual(built.entities[0].length, built.text.length - built.entities[0].offset);
 assert.ok(formatPinJson({ title: "x" }).includes('"title": "x"'));
 
-console.log("ok");
+const previewHtml =
+  '<div data-post="kupim_v_usa/10"></div><div data-post="other/99"></div><div data-post="kupim_v_usa/12"></div>';
+assert.deepStrictEqual(parsePreviewPostIds(previewHtml), [10, 12]);
+assert.strictEqual(maxPreviewPostId(previewHtml), 12);
+assert.strictEqual(maxPreviewPostId(""), null);
+assert.deepStrictEqual(listRecentCandidateIds(5, 3), [5, 4, 3]);
+assert.deepStrictEqual(listRecentCandidateIds(2, 100), [2, 1]);
+assert.deepStrictEqual(listRecentCandidateIds(0, 10), []);
+const fakeStorage = { has(id) { return id === 4 || id === 5; } };
+assert.strictEqual(pickUnusedId([5, 4, 3], fakeStorage, () => 0), 3);
+assert.strictEqual(pickUnusedId([5, 4], fakeStorage, () => 0), null);
+assert.ok(isOurChannelPost({ chat: { type: "channel", username: "kupim_v_usa" }, message_id: 7 }));
+assert.ok(!isOurChannelPost({ chat: { type: "channel", username: "other" }, message_id: 7 }));
+assert.ok(!isOurChannelPost({ chat: { type: "supergroup", username: "kupim_v_usa" }, message_id: 7 }));
+assert.strictEqual(postIdFromChannelPost({ chat: { type: "channel", username: "kupim_v_usa" }, message_id: 7 }), 7);
+assert.strictEqual(postIdFromChannelPost({ chat: { type: "channel", username: "evil" }, message_id: 7 }), null);
+assert.deepStrictEqual(sanitizeState({ enabled: false, latestId: 9 }), { enabled: false, latestId: 9 });
+assert.deepStrictEqual(sanitizeState({ enabled: true, latestId: "1" }), { enabled: true, latestId: null });
+const remembered = rememberLatestId({ enabled: true, latestId: 10 }, 12);
+assert.strictEqual(remembered.latestId, 12);
+
+const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-auto-"));
+const autoFile = path.join(autoDir, "auto.json");
+assert.strictEqual(loadAutoState(autoFile).enabled, true);
+const addedIds = [];
+const autoStorage = {
+  has(id) { return addedIds.includes(id); },
+  add({ postId }) {
+    if (addedIds.includes(postId)) return false;
+    addedIds.push(postId);
+    return true;
+  },
+};
+runAutoImport({
+  storage: autoStorage,
+  state: { enabled: true, latestId: 20 },
+  fetchHtml: async () => '<div data-post="kupim_v_usa/20"></div>',
+  exportPost: async (id) => {
+    if (id === 20) throw new Error("нет фото");
+    return { pin: { title: String(id) } };
+  },
+}).then((result) => {
+  assert.strictEqual(result.ok, true);
+  assert.ok(result.postId !== 20);
+  assert.ok(addedIds.includes(result.postId));
+  fs.rmSync(autoDir, { recursive: true, force: true });
+  console.log("ok");
+}).catch((err) => {
+  fs.rmSync(autoDir, { recursive: true, force: true });
+  console.error(err);
+  process.exit(1);
+});

@@ -204,6 +204,7 @@ if (require.main === module) {
 module.exports = {
   collectPostIds,
   exportPost,
+  fetchBuffer,
   formatPinJson,
   isJpeg,
   pinDir,
