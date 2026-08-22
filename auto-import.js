@@ -12,16 +12,15 @@ const {
 } = require("./channel-feed");
 
 const MAX_ATTEMPTS = 8;
-const DEFAULT_STATE = { enabled: true, latestId: null };
+const DEFAULT_STATE = { latestId: null };
 
 function defaultStatePath() {
   return path.join(__dirname, "data", "auto.json");
 }
 
 function sanitizeState(raw) {
-  const enabled = !(raw && raw.enabled === false);
   const latestId = raw && isValidPostId(raw.latestId) ? raw.latestId : null;
-  return { enabled, latestId };
+  return { latestId };
 }
 
 function loadAutoState(filePath) {
@@ -44,6 +43,7 @@ function saveAutoState(state, filePath) {
 }
 
 function rememberLatestId(state, postId) {
+  if (!state || typeof state !== "object") return { latestId: null };
   if (!isValidPostId(postId)) return state;
   if (!isValidPostId(state.latestId) || postId > state.latestId) {
     state.latestId = postId;

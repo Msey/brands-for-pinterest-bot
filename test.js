@@ -360,14 +360,14 @@ assert.ok(!isOurChannelPost({ chat: { type: "channel", username: "other" }, mess
 assert.ok(!isOurChannelPost({ chat: { type: "supergroup", username: "kupim_v_usa" }, message_id: 7 }));
 assert.strictEqual(postIdFromChannelPost({ chat: { type: "channel", username: "kupim_v_usa" }, message_id: 7 }), 7);
 assert.strictEqual(postIdFromChannelPost({ chat: { type: "channel", username: "evil" }, message_id: 7 }), null);
-assert.deepStrictEqual(sanitizeState({ enabled: false, latestId: 9 }), { enabled: false, latestId: 9 });
-assert.deepStrictEqual(sanitizeState({ enabled: true, latestId: "1" }), { enabled: true, latestId: null });
-const remembered = rememberLatestId({ enabled: true, latestId: 10 }, 12);
+assert.deepStrictEqual(sanitizeState({ enabled: false, latestId: 9 }), { latestId: 9 });
+assert.deepStrictEqual(sanitizeState({ latestId: "1" }), { latestId: null });
+const remembered = rememberLatestId({ latestId: 10 }, 12);
 assert.strictEqual(remembered.latestId, 12);
 
 const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-auto-"));
 const autoFile = path.join(autoDir, "auto.json");
-assert.strictEqual(loadAutoState(autoFile).enabled, true);
+assert.strictEqual(loadAutoState(autoFile).latestId, null);
 const addedIds = [];
 const autoStorage = {
   has(id) { return addedIds.includes(id); },
@@ -379,7 +379,7 @@ const autoStorage = {
 };
 runAutoImport({
   storage: autoStorage,
-  state: { enabled: true, latestId: 20 },
+  state: { latestId: 20 },
   fetchHtml: async () => '<div data-post="kupim_v_usa/20"></div>',
   exportPost: async (id) => {
     if (id === 20) throw new Error("нет фото");

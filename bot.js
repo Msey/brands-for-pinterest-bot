@@ -72,13 +72,6 @@ function commandPattern(name) {
   return new RegExp(`^/${safe}(?:@\\w+)?(?:\\s|$)`, "i");
 }
 
-function parseAutoArg(text) {
-  const match = /^\/auto(?:@\w+)?(?:\s+(\S+))?/i.exec(String(text || "").trim());
-  const arg = match && match[1] ? String(match[1]).toLowerCase() : "";
-  if (arg === "on" || arg === "off") return arg;
-  return "";
-}
-
 async function reply(bot, chatId, text) {
   if (!Number.isFinite(chatId) || !text) return;
   const payload = {
@@ -170,7 +163,7 @@ function main() {
   }
 
   async function tickAutoImport() {
-    if (!autoState.enabled || autoRunning) return;
+    if (autoRunning) return;
     autoRunning = true;
     try {
       await runAutoImport({ storage, state: autoState, exportPost });
@@ -207,8 +200,7 @@ function main() {
           CHANNEL +
           "/123\n\n" +
           "/list — последние 10 ссылок\n" +
-          "/count — сколько уже сохранено\n" +
-          "/auto — автоимпорт случайного поста раз в час"
+          "/count — сколько уже сохранено"
       );
     })
   );
@@ -230,26 +222,6 @@ function main() {
     commandPattern("count"),
     onPrivate(bot, async (msg) => {
       await reply(bot, msg.chat.id, `Сохранено: ${storage.count(msg.from && msg.from.id)}`);
-    })
-  );
-
-  bot.onText(
-    commandPattern("auto"),
-    onPrivate(bot, async (msg) => {
-      const arg = parseAutoArg(msg.text);
-      if (arg === "on") autoState.enabled = true;
-      if (arg === "off") autoState.enabled = false;
-      if (arg) persistAutoState();
-      const status = autoState.enabled ? "включён" : "выключен";
-      const latest = autoState.latestId ? `, последний id канала ${autoState.latestId}` : "";
-      await reply(
-        bot,
-        msg.chat.id,
-        "Автоимпорт " +
-          status +
-          latest +
-          ".\nРаз в час беру случайный пост из последних 100.\n/auto on — включить\n/auto off — выключить"
-      );
     })
   );
 
