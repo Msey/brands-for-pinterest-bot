@@ -141,6 +141,35 @@ class PostStorage {
     return true;
   }
 
+  _replaceAll(records) {
+    const rows = Array.isArray(records) ? records : [];
+    const body = rows.map((row) => JSON.stringify(row) + "\n").join("");
+    if (Buffer.byteLength(body, "utf8") > MAX_FILE_BYTES) {
+      const err = new Error("storage full");
+      err.code = "STORAGE_FULL";
+      throw err;
+    }
+    this._ensureFile();
+    fs.writeFileSync(this.path, body, "utf8");
+    this._recordsCache = rows;
+    this.ids = new Set(rows.map((row) => row.post_id));
+  }
+
+  removeMany(postIds) {
+    const drop = new Set();
+    for (const value of Array.isArray(postIds) ? postIds : []) {
+      const id = toPostId(value);
+      if (id !== null && this.ids.has(id)) drop.add(id);
+    }
+    if (!drop.size) return [];
+    this._replaceAll(this.readRecords().filter((row) => !drop.has(row.post_id)));
+    return Array.from(drop);
+  }
+
+  remove(postId) {
+    return this.removeMany([postId]).length > 0;
+  }
+
   _writeLastSave(postId, savedAt) {
     const dest = path.join(path.dirname(this.path), "last-save.json");
     const body = JSON.stringify({

@@ -13,6 +13,7 @@ const {
 const { PostStorage, parseRecordLine } = require("./storage");
 const {
   collectPostIds,
+  forgetPinsWithoutData,
   formatPinJson,
   isJpeg,
   pinDir,
@@ -146,6 +147,31 @@ assert.strictEqual(
 
 fs.appendFileSync(file, "not-json\n[]\n", "utf8");
 assert.strictEqual(storage.listRecent(10).length, 3);
+
+const rmDir = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-rm-"));
+const rmStore = new PostStorage(path.join(rmDir, "posts.jsonl"));
+assert.strictEqual(rmStore.add({ url: "https://t.me/kupim_v_usa/21", postId: 21, fromUserId: 7 }), true);
+assert.strictEqual(rmStore.add({ url: "https://t.me/kupim_v_usa/22", postId: 22, fromUserId: 7 }), true);
+assert.strictEqual(rmStore.remove(21), true);
+assert.strictEqual(rmStore.has(21), false);
+assert.strictEqual(rmStore.has(22), true);
+assert.strictEqual(rmStore.count(), 1);
+assert.strictEqual(rmStore.remove(21), false);
+assert.strictEqual(rmStore.remove(0), false);
+assert.deepStrictEqual(rmStore.removeMany(["22", 99]).sort((a, b) => a - b), [22]);
+assert.strictEqual(rmStore.count(), 0);
+
+const pinRoot = path.join(rmDir, "pins");
+const keepPin = path.join(pinRoot, "31");
+fs.mkdirSync(keepPin, { recursive: true });
+fs.writeFileSync(path.join(keepPin, "data.json"), "{}\n");
+const syncStore = new PostStorage(path.join(rmDir, "sync.jsonl"));
+assert.strictEqual(syncStore.add({ url: "https://t.me/kupim_v_usa/31", postId: 31 }), true);
+assert.strictEqual(syncStore.add({ url: "https://t.me/kupim_v_usa/32", postId: 32 }), true);
+assert.deepStrictEqual(forgetPinsWithoutData(syncStore, { root: pinRoot, keepIds: [] }).sort((a, b) => a - b), [32]);
+assert.ok(syncStore.has(31));
+assert.ok(!syncStore.has(32));
+fs.rmSync(rmDir, { recursive: true, force: true });
 
 fs.rmSync(dir, { recursive: true, force: true });
 

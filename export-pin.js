@@ -114,6 +114,44 @@ function pruneOldPinDirs(options) {
   return { removed };
 }
 
+function pinDataPath(postId, root) {
+  const id = String(postId);
+  if (!PIN_DIR_ID.test(id)) return null;
+  const base = root && typeof root === "string" && root.trim() ? path.resolve(root) : pinTemplatesRoot();
+  return path.join(base, id, "data.json");
+}
+
+function hasPinData(postId, root) {
+  const file = pinDataPath(postId, root);
+  if (!file) return false;
+  try {
+    return fs.existsSync(file);
+  } catch {
+    return false;
+  }
+}
+
+function forgetPinsWithoutData(storage, options) {
+  if (!storage || typeof storage.readRecords !== "function") return [];
+  const keepIds = new Set(
+    (options && Array.isArray(options.keepIds) ? options.keepIds : [])
+      .map((id) => String(id))
+      .filter((id) => PIN_DIR_ID.test(id))
+  );
+  const root = options && options.root;
+  const stale = storage
+    .readRecords()
+    .map((row) => row.post_id)
+    .filter((id) => !keepIds.has(String(id)) && !hasPinData(id, root));
+  if (!stale.length) return [];
+  if (typeof storage.removeMany === "function") return storage.removeMany(stale);
+  const removed = [];
+  for (const id of stale) {
+    if (typeof storage.remove === "function" && storage.remove(id)) removed.push(id);
+  }
+  return removed;
+}
+
 function jsonlPath() {
   return path.join(__dirname, "data", "posts.jsonl");
 }
@@ -306,4 +344,6 @@ module.exports = {
   isJpeg,
   pinDir,
   pruneOldPinDirs,
+  forgetPinsWithoutData,
+  hasPinData,
 };

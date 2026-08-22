@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const { canonicalUrl, isValidPostId } = require("./links");
-const { exportPost, pruneOldPinDirs } = require("./export-pin");
+const { exportPost, forgetPinsWithoutData, pruneOldPinDirs } = require("./export-pin");
 const {
   PREVIEW_WINDOW,
   fetchLatestPostId,
@@ -65,18 +65,31 @@ async function resolveLatestId(state, fetchHtml) {
   return latest;
 }
 
-function pruneAfterImport(prune, createdId) {
+function pruneAfterImport(prune, createdId, storage) {
+  const keepIds = createdId != null ? [createdId] : [];
+  const removed = [];
   try {
-    const pruned = prune({ keepIds: createdId != null ? [createdId] : [] });
-    const removed = pruned && Array.isArray(pruned.removed) ? pruned.removed : [];
-    if (removed.length) {
-      console.log("auto: удалены старые папки", removed.join(", "));
+    const pruned = prune({ keepIds });
+    const folders = pruned && Array.isArray(pruned.removed) ? pruned.removed : [];
+    if (folders.length) {
+      console.log("auto: удалены старые папки", folders.join(", "));
+      removed.push(...folders);
     }
-    return removed;
   } catch (err) {
     console.error("auto_prune", err && err.message ? err.message : err);
-    return [];
   }
+  try {
+    const forgotten = forgetPinsWithoutData(storage, { keepIds });
+    if (forgotten.length) {
+      console.log("auto: убраны из базы без папки", forgotten.join(", "));
+      for (const id of forgotten) {
+        if (!removed.includes(id)) removed.push(id);
+      }
+    }
+  } catch (err) {
+    console.error("auto_sync", err && err.message ? err.message : err);
+  }
+  return removed;
 }
 
 async function runAutoImport(options) {
@@ -135,7 +148,7 @@ async function runAutoImport(options) {
     }
     return result;
   } finally {
-    result.pruned = pruneAfterImport(prune, createdId);
+    result.pruned = pruneAfterImport(prune, createdId, storage);
   }
 }
 
