@@ -2,6 +2,7 @@
 
 const { CHANNEL, canonicalUrl, isValidPostId } = require("./links");
 const { inferBoard } = require("./boards");
+const { inferDescription } = require("./descriptions");
 
 const MAX_TITLE = 100;
 const MAX_DESC = 500;
@@ -23,12 +24,23 @@ const TYPE_RULES = [
   { match: /^очки\s+солнцезащитные(?:\s|$)/i, type: "очки", category: "очки", boardKind: "очки" },
   { match: /^кроссовки(?:\s|$)/i, type: "кроссовки", category: "обувь", boardKind: "обувь" },
   { match: /^кеды(?:\s|$)/i, type: "кеды", category: "обувь", boardKind: "обувь" },
+  { match: /^угги(?:\s|$)/i, type: "угги", category: "обувь", boardKind: "обувь" },
+  { match: /^сапоги(?:\s|$)/i, type: "сапоги", category: "обувь", boardKind: "обувь" },
+  { match: /^ботинки(?:\s|$)/i, type: "ботинки", category: "обувь", boardKind: "обувь" },
   { match: /^куртка(?:\s|$)/i, type: "куртка", category: "одежда", boardKind: "куртки" },
   { match: /^купальник(?:\s|$)/i, type: "купальник", category: "одежда", boardKind: "купальник" },
+  { match: /^пижама(?:\s|$)/i, type: "пижама", category: "белье", boardKind: "белье" },
+  { match: /^халат(?:\s|$)/i, type: "халат", category: "белье", boardKind: "белье" },
   { match: /^худи(?:\s|$)/i, type: "худи", category: "одежда", boardKind: "одежда" },
   { match: /^брюки(?:\s|$)/i, type: "брюки", category: "одежда", boardKind: "одежда" },
+  { match: /^платье(?:\s|$)/i, type: "платье", category: "одежда", boardKind: "одежда" },
+  { match: /^рюкзак(?:\s|$)/i, type: "рюкзак", category: "сумка", boardKind: "сумки" },
   { match: /^сумка(?:\s|$)/i, type: "сумка", category: "сумка", boardKind: "сумки" },
   { match: /^очки(?:\s|$)/i, type: "очки", category: "очки", boardKind: "очки" },
+  { match: /^часы(?:\s|$)/i, type: "часы", category: "часы", boardKind: "аксессуары" },
+  { match: /^панама(?:\s|$)/i, type: "панама", category: "аксессуары", boardKind: "аксессуары" },
+  { match: /^термос(?:\s|$)/i, type: "термос", category: "аксессуары", boardKind: "аксессуары" },
+  { match: /^термокружка(?:\s|$)/i, type: "термос", category: "аксессуары", boardKind: "аксессуары" },
 ];
 
 const MODEL_SKIP = /^(высокие|низкие|кожаные|слева|справа)(?:\s|$)/i;
@@ -163,22 +175,6 @@ function parseAudience(text) {
   return { key: "", label: "", titleWord: "", tag: "" };
 }
 
-function parsePrices(html, text) {
-  const oldMatch = /<s>\s*(\d+)\s*₽/i.exec(html) || /(\d+)\s*₽/.exec(text);
-  const newMatch = /(\d+)\s*₽\s*\+\s*доставка/i.exec(text);
-  return {
-    oldPrice: oldMatch ? oldMatch[1] : "",
-    newPrice: newMatch ? newMatch[1] : "",
-  };
-}
-
-function parseSku(html, text) {
-  const code = /ID:\s*<code>\s*(\d+)\s*<\/code>/i.exec(html);
-  if (code) return code[1];
-  const plain = /ID:\s*`?(\d+)`?/i.exec(text);
-  return plain ? plain[1] : "";
-}
-
 function parseBrand(html, text) {
   const bold = /<b>([^<]{1,80})<\/b>/.exec(html);
   if (bold) {
@@ -219,14 +215,6 @@ function brandTags(brand) {
   return [];
 }
 
-function extraLines(text) {
-  const skip = /для заказа|подпишись|zakaz_managers|\bID:\s*\d+|^\d+\s*₽|унисекс|мужской раздел|женский раздел/i;
-  return text
-    .split(/\n+/)
-    .map((line) => line.replace(/🇺🇸/g, "").trim())
-    .filter((line) => line && !skip.test(line) && !/^[\d₽➡️+\s]+$/.test(line));
-}
-
 function buildTags({ brand, product, audience }) {
   const tags = [];
   const seen = new Set();
@@ -255,20 +243,8 @@ function buildTitle({ brand, product, audience }) {
   return withTitleSuffix(title);
 }
 
-function buildDescription({ audience, oldPrice, newPrice, extras, sku, otherNames }) {
-  const parts = [];
-  if (audience.label) parts.push(audience.label + ".");
-  if (oldPrice && newPrice) {
-    parts.push(`Было ${oldPrice}₽, сейчас ${newPrice}₽ + доставка.`);
-  } else if (newPrice) {
-    parts.push(`${newPrice}₽ + доставка.`);
-  }
-  for (const line of extras.slice(0, 4)) {
-    if (line.length > 2 && line.length < 80) parts.push(line.replace(/\.?$/, "."));
-  }
-  if (sku) parts.push(`ID ${sku}.`);
-  if (otherNames.length) parts.push("Также в посте: " + otherNames.join(", ") + ".");
-  return clip(parts.join(" "), MAX_DESC);
+function buildDescription({ brand, product, audience }) {
+  return inferDescription({ brand, product, audience });
 }
 
 function parseCaptionHtml(captionHtml, options) {
@@ -290,26 +266,11 @@ function parseCaptionHtml(captionHtml, options) {
 
   const primary = products[0];
   const audience = parseAudience(text);
-  const { oldPrice, newPrice } = parsePrices(html, text);
-  const sku = parseSku(html, text);
   const brand = parseBrand(html, text);
-  const extras = extraLines(text).filter((line) => {
-    const lower = line.toLowerCase();
-    if (lower === brand.toLowerCase()) return false;
-    if (products.some((item) => lower === item.name.toLowerCase())) return false;
-    return true;
-  });
 
   const pin = {
     title: buildTitle({ brand, product: primary, audience }),
-    description: buildDescription({
-      audience,
-      oldPrice,
-      newPrice,
-      extras,
-      sku,
-      otherNames: products.slice(1).map((item) => item.name),
-    }),
+    description: buildDescription({ brand, product: primary, audience }),
     link: canonicalUrl(postId),
     tags: buildTags({ brand, product: primary, audience }),
   };

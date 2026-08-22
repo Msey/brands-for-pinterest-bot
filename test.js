@@ -15,6 +15,7 @@ const { collectPostIds, formatPinJson, isJpeg, pinDir } = require("./export-pin"
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
 const { BOARDS } = require("./boards");
+const { inferDescription, MISSING_DESCRIPTION } = require("./descriptions");
 const {
   isOurChannelPost,
   listRecentCandidateIds,
@@ -154,8 +155,10 @@ const parsed47039 = parseEmbedHtml(html47039, 47039);
 assert.strictEqual(parsed47039.photoUrl, "https://cdn4.telesco.pe/file/demo47039.jpg");
 assert.strictEqual(parsed47039.pin.title, "Nike Air Max Ishod — унисекс кроссовки | оригинал из США");
 assert.strictEqual(parsed47039.pin.link, "https://t.me/kupim_v_usa/47039");
-assert.ok(parsed47039.pin.description.includes("11800₽"));
-assert.ok(parsed47039.pin.description.includes("723660"));
+assert.ok(parsed47039.pin.description.includes("кроссовки nike"));
+assert.ok(parsed47039.pin.description.includes("Nike Air Max"));
+assert.ok(!parsed47039.pin.description.includes("11800₽"));
+assert.ok(!parsed47039.pin.description.includes("723660"));
 assert.ok(!parsed47039.pin.description.includes("zakaz_managers"));
 assert.deepStrictEqual(parsed47039.pin.tags, ["nike", "кроссовки", "обувь", "унисекс"]);
 assert.strictEqual(parsed47039.pin.board, undefined);
@@ -168,14 +171,66 @@ assert.strictEqual(pin46991.board, BOARDS.jackets);
 assert.ok(pin46991.tags.includes("calvin klein"));
 assert.ok(pin46991.tags.includes("куртка"));
 assert.ok(pin46991.tags.includes("мужские"));
-assert.ok(pin46991.description.includes("M, XL, 2XL"));
+assert.ok(pin46991.description.includes("Calvin Klein куртки"));
+assert.ok(!pin46991.description.includes("7800₽"));
 
 const html46874 = `<b>Timberland</b> 🇺🇸<br><br><a href="https://www.timberland.com/en-us/p/left">Худи слева</a> (мужской раздел)<br><b><s>8400₽</s> ➡️ 3000₽ + доставка</b><br><a href="https://www.timberland.com/en-us/p/right">Худи справа</a> (мужской раздел)<br><b><s>8400₽</s> ➡️ 2600₽ + доставка</b><br><br>ID: <code>721351</code>`;
 const pin46874 = parseCaptionHtml(html46874, { postId: 46874 });
 assert.strictEqual(pin46874.title, "Timberland — мужские худи | оригинал из США");
 assert.strictEqual(pin46874.link, "https://t.me/kupim_v_usa/46874");
-assert.ok(pin46874.description.includes("Худи справа"));
+assert.strictEqual(pin46874.description, MISSING_DESCRIPTION);
 assert.strictEqual(pin46874.board, BOARDS.menClothes);
+
+const htmlVs = `<b>Victoria's Secret</b> 🇺🇸<br><br><a href="https://www.victoriassecret.com/p/pj">Пижама атласная</a> (женский раздел)<br>ID: <code>1</code>`;
+const pinVs = parseCaptionHtml(htmlVs, { postId: 11 });
+assert.ok(pinVs.description.includes("пижама Виктория Сикрет"));
+assert.ok(!pinVs.description.includes("жми"));
+
+const htmlRayBan = `<b>Ray-Ban</b> 🇺🇸<br><br><a href="https://www.ray-ban.com/p/aviator">Очки солнцезащитные Aviator</a><br>ID: <code>2</code>`;
+const pinRayBan = parseCaptionHtml(htmlRayBan, { postId: 12 });
+assert.ok(pinRayBan.description.includes("Ray-Ban Aviator"));
+assert.strictEqual(pinRayBan.board, BOARDS.glasses);
+
+const htmlDress = `<b>Unknown Brand</b> 🇺🇸<br><br><a href="https://www.example.com/p/dress">Платье</a> (женский раздел)<br>ID: <code>3</code>`;
+const pinDress = parseCaptionHtml(htmlDress, { postId: 13 });
+assert.ok(pinDress.description.includes("капсульный гардероб"));
+
+assert.ok(
+  inferDescription({
+    brand: "Adidas",
+    product: { name: "Кроссовки Handball Spezial", type: "кроссовки", boardKind: "обувь", model: "Handball Spezial" },
+    audience: { key: "unisex" },
+  }).includes("Adidas Spezial")
+);
+assert.ok(
+  inferDescription({
+    brand: "Adidas",
+    product: { name: "Кроссовки Gazelle", type: "кроссовки", boardKind: "обувь", model: "Gazelle" },
+    audience: { key: "unisex" },
+  }).includes("Adidas Gazelle")
+);
+assert.strictEqual(
+  inferDescription({
+    brand: "Adidas",
+    product: { name: "Кроссовки Samba", type: "кроссовки", boardKind: "обувь", model: "Samba" },
+    audience: { key: "unisex" },
+  }),
+  MISSING_DESCRIPTION
+);
+assert.ok(
+  inferDescription({
+    brand: "DKNY",
+    product: { name: "Сумка", type: "сумка", boardKind: "сумки" },
+    audience: { key: "women" },
+  }).includes("сумка DKNY")
+);
+assert.ok(
+  inferDescription({
+    brand: "DKNY",
+    product: { name: "Платье", type: "платье", boardKind: "одежда" },
+    audience: { key: "women" },
+  }).includes("DKNY платья")
+);
 
 assert.strictEqual(BOARDS.accessories, "Аксессуары");
 assert.strictEqual(BOARDS.womenShoes, "Женская обувь");
