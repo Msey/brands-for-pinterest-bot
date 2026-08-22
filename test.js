@@ -131,6 +131,10 @@ assert.deepStrictEqual(storage.listRecent(10, 999), []);
 assert.strictEqual(storage.count(8), 1);
 assert.strictEqual(storage.count(7), 1);
 assert.strictEqual(storage.count(999), 0);
+assert.strictEqual(
+  JSON.parse(fs.readFileSync(path.join(dir, "last-save.json"), "utf8")).post_id,
+  5
+);
 
 fs.appendFileSync(file, "not-json\n[]\n", "utf8");
 assert.strictEqual(storage.listRecent(10).length, 3);

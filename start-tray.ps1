@@ -129,8 +129,9 @@ $script:postLinesCache = @()
 $script:postsStamp = $null
 $script:postsCount = 0
 $script:knownCount = 0
+$script:knownLastId = $null
+$script:watchers = @()
 $script:timer = $null
-$script:watcher = $null
 $script:watchDebounce = $null
 $script:popupForm = $null
 $script:popupTimer = $null
@@ -297,15 +298,24 @@ function Get-SafeDisplayLine([string]$line) {
   return $clean
 }
 
+function Get-FileInfoRefreshed([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path) -or -not [System.IO.File]::Exists($path)) {
+    return $null
+  }
+  $info = New-Object System.IO.FileInfo($path)
+  $info.Refresh()
+  return $info
+}
+
 function Get-PostLines {
-  if (-not (Test-Path -LiteralPath $PostsFile)) {
+  $item = Get-FileInfoRefreshed $PostsFile
+  if (-not $item) {
     $script:postLinesCache = @()
     $script:postsStamp = $null
     $script:postsCount = 0
     return @()
   }
   try {
-    $item = Get-Item -LiteralPath $PostsFile
     if ($item.Length -gt $MaxFileBytes) {
       $script:postsCount = -1
       $script:postLinesCache = @()
@@ -371,6 +381,42 @@ function Get-LastSavedUrl {
     return $Matches[1]
   }
   return $null
+}
+
+function Get-LastSaveId {
+  $path = Join-Path $Root "data\last-save.json"
+  $item = Get-FileInfoRefreshed $path
+  if (-not $item) { return $null }
+  try {
+    $stream = [System.IO.File]::Open(
+      $path,
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::Read,
+      [System.IO.FileShare]::ReadWrite
+    )
+    try {
+      $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+      try {
+        $text = $reader.ReadToEnd()
+      }
+      finally {
+        $reader.Dispose()
+      }
+    }
+    finally {
+      $stream.Dispose()
+    }
+    return Get-PostIdFromLogLine $text
+  }
+  catch {
+    return $null
+  }
+}
+
+function Get-LatestKnownPostId {
+  $fromSave = Get-LastSaveId
+  if ($fromSave) { return $fromSave }
+  return Get-PostIdFromLogLine (Get-LastSavedLine)
 }
 
 function Close-TrayPopup {
@@ -510,13 +556,19 @@ function Show-NewLinkBalloon {
 
 function Check-NewPosts {
   $previous = $script:knownCount
+  $previousId = $script:knownLastId
   Get-PostLines | Out-Null
   $count = Get-SavedCount
+  $lastId = Get-LatestKnownPostId
   $added = 0
   if ($count -ge 0 -and $previous -ge 0 -and $count -gt $previous) {
     $added = $count - $previous
   }
+  elseif ($lastId -and $previousId -and $lastId -ne $previousId) {
+    $added = 1
+  }
   $script:knownCount = $count
+  $script:knownLastId = $lastId
   if ($added -gt 0 -and -not $script:restarting) {
     Show-NewLinkBalloon $added
   }
@@ -869,6 +921,7 @@ $script:notify.Add_DoubleClick({ Show-MainWindow }) | Out-Null
 
 Get-PostLines | Out-Null
 $script:knownCount = Get-SavedCount
+$script:knownLastId = Get-LatestKnownPostId
 
 $dataDir = Split-Path -Parent $PostsFile
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -891,19 +944,28 @@ $script:watchDebounce.Add_Tick({
   Update-WindowStatus
 }) | Out-Null
 
-$script:watcher = New-Object System.IO.FileSystemWatcher
-$script:watcher.Path = $dataDir
-$script:watcher.Filter = "posts.jsonl"
-$script:watcher.IncludeSubdirectories = $false
-$script:watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size -bor [System.IO.NotifyFilters]::FileName
-$script:watcher.SynchronizingObject = $script:form
 $script:watchHandler = {
   $script:watchDebounce.Stop()
   $script:watchDebounce.Start()
 }
-$script:watcher.add_Changed($script:watchHandler)
-$script:watcher.add_Created($script:watchHandler)
-$script:watcher.EnableRaisingEvents = $true
+function New-DataFileWatcher([string]$filter) {
+  $w = New-Object System.IO.FileSystemWatcher
+  $w.Path = $dataDir
+  $w.Filter = $filter
+  $w.IncludeSubdirectories = $false
+  $w.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size -bor [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::CreationTime
+  $w.InternalBufferSize = 65536
+  $w.SynchronizingObject = $script:form
+  $w.add_Changed($script:watchHandler)
+  $w.add_Created($script:watchHandler)
+  $w.add_Renamed($script:watchHandler)
+  $w.EnableRaisingEvents = $true
+  return $w
+}
+$script:watchers = @(
+  (New-DataFileWatcher "posts.jsonl"),
+  (New-DataFileWatcher "last-save.json")
+)
 
 $script:timer = New-Object System.Windows.Forms.Timer
 $script:timer.Interval = 3000
@@ -944,13 +1006,15 @@ finally {
     $script:watchDebounce.Stop()
     $script:watchDebounce.Dispose()
   }
-  if ($script:watcher) {
-    $script:watcher.EnableRaisingEvents = $false
+  foreach ($w in @($script:watchers)) {
+    if (-not $w) { continue }
+    $w.EnableRaisingEvents = $false
     if ($script:watchHandler) {
-      $script:watcher.remove_Changed($script:watchHandler)
-      $script:watcher.remove_Created($script:watchHandler)
+      $w.remove_Changed($script:watchHandler)
+      $w.remove_Created($script:watchHandler)
+      $w.remove_Renamed($script:watchHandler)
     }
-    $script:watcher.Dispose()
+    $w.Dispose()
   }
   if ($script:timer) {
     $script:timer.Stop()

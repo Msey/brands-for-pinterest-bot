@@ -137,7 +137,21 @@ class PostStorage {
     fs.appendFileSync(this.path, line, "utf8");
     this.ids.add(id);
     if (this._recordsCache) this._recordsCache.push(record);
+    this._writeLastSave(id, record.saved_at);
     return true;
+  }
+
+  _writeLastSave(postId, savedAt) {
+    const dest = path.join(path.dirname(this.path), "last-save.json");
+    const body = JSON.stringify({
+      post_id: postId,
+      saved_at: typeof savedAt === "string" ? savedAt : new Date().toISOString(),
+    }) + "\n";
+    try {
+      fs.writeFileSync(dest, body, "utf8");
+    } catch {
+      // Sidecar is only for the tray popup; the jsonl row is already saved.
+    }
   }
 
   count(userId) {
