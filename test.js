@@ -238,6 +238,18 @@ const pinDknyShoes = parseCaptionHtml(htmlDknyShoes, { postId: 15 });
 assert.ok(pinDknyShoes.description.includes("кроссовки DKNY"));
 assert.strictEqual(pinDknyShoes.board, BOARDS.womenShoes);
 
+const htmlDknyHeels = `<b>DKNY</b> 🇺🇸<br><br><a href="https://www.dkny.com/p/pumps">Туфли</a> (женский раздел)<br>ID: <code>6</code>`;
+const pinDknyHeels = parseCaptionHtml(htmlDknyHeels, { postId: 16 });
+assert.ok(pinDknyHeels.description.includes("туфли DKNY"));
+assert.strictEqual(pinDknyHeels.board, BOARDS.womenShoes);
+assert.strictEqual(pinDknyHeels.title, "DKNY — женские туфли | оригинал из США");
+
+const htmlGucciLip = `<b>Gucci</b> 🇺🇸<br><br><a href="https://www.gucci.com/us/en/pr/lipstick">Помада для губ</a> (женский раздел)<br>ID: <code>7</code>`;
+const pinGucciLip = parseCaptionHtml(htmlGucciLip, { postId: 17 });
+assert.ok(pinGucciLip.description.includes("помада Gucci"));
+assert.strictEqual(pinGucciLip.board, BOARDS.cosmetics);
+assert.strictEqual(pinGucciLip.title, "Gucci — женские помада | оригинал из США");
+
 assert.ok(
   inferDescription({
     brand: "Adidas",

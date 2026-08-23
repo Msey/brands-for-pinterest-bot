@@ -27,6 +27,7 @@ const TYPE_RULES = [
   { match: /^угги(?:\s|$)/i, type: "угги", category: "обувь", boardKind: "обувь" },
   { match: /^сапоги(?:\s|$)/i, type: "сапоги", category: "обувь", boardKind: "обувь" },
   { match: /^ботинки(?:\s|$)/i, type: "ботинки", category: "обувь", boardKind: "обувь" },
+  { match: /^туфли(?:\s|$)/i, type: "туфли", category: "обувь", boardKind: "обувь" },
   { match: /^куртка(?:\s|$)/i, type: "куртка", category: "одежда", boardKind: "куртки" },
   { match: /^купальник(?:\s|$)/i, type: "купальник", category: "одежда", boardKind: "купальник" },
   { match: /^пижама(?:\s|$)/i, type: "пижама", category: "белье", boardKind: "белье" },
@@ -43,6 +44,8 @@ const TYPE_RULES = [
   { match: /^термокружка(?:\s|$)/i, type: "термос", category: "аксессуары", boardKind: "аксессуары" },
   { match: /^тональная\s+основа(?:\s|$)/i, type: "тональная основа", category: "косметика", boardKind: "косметика" },
   { match: /^тональный\s+крем(?:\s|$)/i, type: "тональный крем", category: "косметика", boardKind: "косметика" },
+  { match: /^помада\s+для\s+губ(?:\s|$)/i, type: "помада", category: "косметика", boardKind: "косметика" },
+  { match: /^помада(?:\s|$)/i, type: "помада", category: "косметика", boardKind: "косметика" },
 ];
 
 const MODEL_SKIP = /^(высокие|низкие|кожаные|слева|справа)(?:\s|$)/i;
