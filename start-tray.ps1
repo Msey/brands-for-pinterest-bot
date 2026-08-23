@@ -124,6 +124,7 @@ $NodeFallback = "C:\Program Files\nodejs\node.exe"
 $script:allowExit = $false
 $script:botProcess = $null
 $script:restarting = $false
+$script:clearing = $false
 $script:consoleNotes = New-Object System.Collections.ArrayList
 $script:postLinesCache = @()
 $script:postsStamp = $null
@@ -281,6 +282,7 @@ function Start-BotProcess {
 }
 
 function Get-BotStatus {
+  if ($script:clearing) { return "Очистка..." }
   if ($script:restarting) { return "Перезапуск..." }
   if ($script:botProcess) { $script:botProcess.Refresh() }
   if ($script:botProcess -and -not $script:botProcess.HasExited) {
@@ -717,6 +719,144 @@ function Open-DataFolder {
   [void](Open-FolderUnderRoot $data)
 }
 
+function Test-PathInsideRoot([string]$root, [string]$target) {
+  if ([string]::IsNullOrWhiteSpace($root) -or [string]::IsNullOrWhiteSpace($target)) {
+    return $false
+  }
+  try {
+    $rootFull = [System.IO.Path]::GetFullPath($root)
+    $targetFull = [System.IO.Path]::GetFullPath($target)
+  }
+  catch {
+    return $false
+  }
+  $prefix = $rootFull.TrimEnd('\') + '\'
+  return (
+    $targetFull.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase) -or
+    $targetFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+  )
+}
+
+function Test-LinkLikeDir([string]$dir) {
+  try {
+    $item = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+  }
+  catch {
+    return $true
+  }
+  return [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+}
+
+function Reset-PostsStorage {
+  $data = Split-Path -Parent $PostsFile
+  New-Item -ItemType Directory -Force -Path $data | Out-Null
+  [System.IO.File]::WriteAllText($PostsFile, "")
+  $lastSave = Join-Path $data "last-save.json"
+  if (Test-Path -LiteralPath $lastSave -PathType Leaf) {
+    Remove-Item -LiteralPath $lastSave -Force
+  }
+}
+
+function Clear-PinTemplateFolders {
+  $root = Join-Path $Root "pin-templates"
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+    return @{ Removed = 0; Failed = 0 }
+  }
+  $removed = 0
+  $failed = 0
+  foreach ($item in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
+    if ($item.Name -notmatch '^\d{1,16}$') { continue }
+    if (-not $item.PSIsContainer) { continue }
+    $dir = $item.FullName
+    if (-not (Test-PathInsideRoot $root $dir)) { continue }
+    if (Test-LinkLikeDir $dir) { continue }
+    try {
+      Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+      $removed++
+    }
+    catch {
+      $failed++
+      Add-ConsoleNote "не удалось удалить папку $($item.Name)"
+    }
+  }
+  return @{ Removed = $removed; Failed = $failed }
+}
+
+function Reset-PinCaches {
+  $script:postLinesCache = @()
+  $script:postsStamp = $null
+  $script:postsCount = 0
+  $script:knownCount = 0
+  $script:knownLastId = $null
+}
+
+function Set-BusyButtons([bool]$enabled) {
+  if ($script:btnRestart) { $script:btnRestart.Enabled = $enabled }
+  if ($script:btnClear) { $script:btnClear.Enabled = $enabled }
+}
+
+function Clear-AllPinData {
+  if ($script:restarting -or $script:clearing) { return }
+  $confirm = [System.Windows.Forms.MessageBox]::Show(
+    "Удалить все записи о пинах и папки pin-templates? Это нельзя отменить.",
+    $AppTitle,
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+  $script:clearing = $true
+  $script:restarting = $true
+  Set-BusyButtons $false
+  try {
+    Get-PostLines | Out-Null
+    $saved = Get-SavedCount
+    if ($saved -lt 0) { $saved = 0 }
+    if ($script:statusLabel) {
+      $script:statusLabel.Text = "Статус: Очистка..."
+    }
+    Add-ConsoleNote "останавливаю бота перед очисткой..."
+    Update-LogList
+    [System.Windows.Forms.Application]::DoEvents()
+
+    Stop-BotProcesses
+    Start-Sleep -Milliseconds 400
+
+    Reset-PostsStorage
+    $folders = Clear-PinTemplateFolders
+    Reset-PinCaches
+
+    $note = "очищены все пины: $saved записей, $($folders.Removed) папок"
+    if ($folders.Failed -gt 0) {
+      $note = "$note, не удалено $($folders.Failed)"
+    }
+    Add-ConsoleNote $note
+
+    $ok = Start-BotProcess -SkipStop
+    Start-Sleep -Milliseconds 400
+    if ($script:botProcess) { $script:botProcess.Refresh() }
+    if ($ok -and $script:botProcess -and -not $script:botProcess.HasExited) {
+      Add-ConsoleNote "бот перезапущен, PID $($script:botProcess.Id)"
+    }
+    else {
+      Add-ConsoleNote "ошибка: процесс bot.js не запустился"
+    }
+
+    Update-WindowStatus
+    Show-TrayPopup -Title $AppTitle -Text "Все данные пинов удалены" -TimeoutMs 4000
+  }
+  catch {
+    Add-ConsoleNote "ошибка очистки: $($_.Exception.Message)"
+    Update-LogList
+  }
+  finally {
+    $script:clearing = $false
+    $script:restarting = $false
+    Set-BusyButtons $true
+  }
+}
+
 function Open-PostFolderFromLogLine([string]$line) {
   Open-PostFolderById (Get-PostIdFromLogLine $line)
 }
@@ -730,9 +870,9 @@ function Add-ConsoleNote([string]$text) {
 }
 
 function Restart-Bot {
-  if ($script:restarting) { return }
+  if ($script:restarting -or $script:clearing) { return }
   $script:restarting = $true
-  if ($script:btnRestart) { $script:btnRestart.Enabled = $false }
+  Set-BusyButtons $false
   try {
     if ($script:statusLabel) {
       $script:statusLabel.Text = "Статус: Перезапуск..."
@@ -768,7 +908,7 @@ function Restart-Bot {
   }
   finally {
     $script:restarting = $false
-    if ($script:btnRestart) { $script:btnRestart.Enabled = $true }
+    Set-BusyButtons $true
   }
 }
 
@@ -880,21 +1020,28 @@ $script:logList.Add_DoubleClick({
 
 $btnFolder = New-Object System.Windows.Forms.Button
 $btnFolder.Location = New-Object System.Drawing.Point(20, 368)
-$btnFolder.Size = New-Object System.Drawing.Size(180, 32)
+$btnFolder.Size = New-Object System.Drawing.Size(150, 32)
 $btnFolder.Text = "Папка с данными"
 $btnFolder.Add_Click({ Open-DataFolder }) | Out-Null
 
 $script:btnRestart = New-Object System.Windows.Forms.Button
-$script:btnRestart.Location = New-Object System.Drawing.Point(220, 368)
-$script:btnRestart.Size = New-Object System.Drawing.Size(180, 32)
+$script:btnRestart.Location = New-Object System.Drawing.Point(186, 368)
+$script:btnRestart.Size = New-Object System.Drawing.Size(150, 32)
 $script:btnRestart.Text = "Перезапустить"
 $script:btnRestart.Add_Click({ Restart-Bot }) | Out-Null
+
+$script:btnClear = New-Object System.Windows.Forms.Button
+$script:btnClear.Location = New-Object System.Drawing.Point(352, 368)
+$script:btnClear.Size = New-Object System.Drawing.Size(230, 32)
+$script:btnClear.Text = "Очистить все данные"
+$script:btnClear.Add_Click({ Clear-AllPinData }) | Out-Null
 
 $script:form.Controls.Add($script:statusLabel)
 $script:form.Controls.Add($script:countLabel)
 $script:form.Controls.Add($script:logList)
 $script:form.Controls.Add($btnFolder)
 $script:form.Controls.Add($script:btnRestart)
+$script:form.Controls.Add($script:btnClear)
 
 $script:form.Add_FormClosing({
   param($sender, $e)
@@ -914,6 +1061,7 @@ $menu = New-Object System.Windows.Forms.ContextMenu
 Add-TrayMenuItem $menu "Открыть окно" { Show-MainWindow }
 Add-TrayMenuItem $menu "Папка с данными" { Open-DataFolder }
 Add-TrayMenuItem $menu "Перезапустить" { Restart-Bot }
+Add-TrayMenuItem $menu "Очистить все данные" { Clear-AllPinData }
 [void]$menu.MenuItems.Add("-")
 Add-TrayMenuItem $menu "Выход" { Exit-App }
 $script:notify.ContextMenu = $menu
@@ -940,6 +1088,7 @@ $script:watchDebounce = New-Object System.Windows.Forms.Timer
 $script:watchDebounce.Interval = 400
 $script:watchDebounce.Add_Tick({
   $script:watchDebounce.Stop()
+  if ($script:restarting -or $script:clearing) { return }
   Check-NewPosts
   Update-WindowStatus
 }) | Out-Null
