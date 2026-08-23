@@ -233,6 +233,11 @@ const pinArmani = parseCaptionHtml(htmlArmani, { postId: 14 });
 assert.ok(pinArmani.description.includes("тональная основа Armani"));
 assert.strictEqual(pinArmani.board, BOARDS.cosmetics);
 
+const htmlDknyShoes = `<b>DKNY</b> 🇺🇸<br><br><a href="https://www.dkny.com/p/sneakers">Кроссовки</a> (женский раздел)<br>ID: <code>5</code>`;
+const pinDknyShoes = parseCaptionHtml(htmlDknyShoes, { postId: 15 });
+assert.ok(pinDknyShoes.description.includes("кроссовки DKNY"));
+assert.strictEqual(pinDknyShoes.board, BOARDS.womenShoes);
+
 assert.ok(
   inferDescription({
     brand: "Adidas",
