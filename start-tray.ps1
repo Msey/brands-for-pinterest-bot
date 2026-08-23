@@ -131,6 +131,9 @@ $script:postsStamp = $null
 $script:postsCount = 0
 $script:knownCount = 0
 $script:knownLastId = $null
+$script:logViewStamp = $null
+$script:timerIdleMs = 10000
+$script:timerActiveMs = 4000
 $script:watchers = @()
 $script:timer = $null
 $script:watchDebounce = $null
@@ -342,7 +345,7 @@ function Get-PostLines {
         while ($null -ne ($line = $reader.ReadLine())) {
           if ([string]::IsNullOrWhiteSpace($line)) { continue }
           $count++
-          $recent.Enqueue((Get-SafeDisplayLine $line))
+          $recent.Enqueue($line)
           if ($recent.Count -gt $RecentLimit) {
             [void]$recent.Dequeue()
           }
@@ -356,7 +359,11 @@ function Get-PostLines {
       $stream.Dispose()
     }
     $script:postsCount = $count
-    $script:postLinesCache = @($recent.ToArray())
+    $script:postLinesCache = @(
+      foreach ($line in $recent.ToArray()) {
+        Get-SafeDisplayLine $line
+      }
+    )
     $script:postsStamp = $stamp
     return $script:postLinesCache
   }
@@ -576,9 +583,31 @@ function Check-NewPosts {
   }
 }
 
+function Get-LogViewStamp {
+  $notes = @($script:consoleNotes)
+  $lastNote = ""
+  if ($notes.Count -gt 0) {
+    $lastNote = [string]$notes[$notes.Count - 1]
+  }
+  return "$($script:postsStamp)|$($notes.Count)|$lastNote"
+}
+
+function Update-PollTimer {
+  if (-not $script:timer) { return }
+  $want = $script:timerIdleMs
+  if (Test-MainWindowOpen) { $want = $script:timerActiveMs }
+  if ($script:timer.Interval -ne $want) {
+    $script:timer.Interval = $want
+  }
+}
+
 function Update-LogList {
   if (-not $script:logList) { return }
   $items = @(Get-PostLines)
+  $stamp = Get-LogViewStamp
+  if ($stamp -eq $script:logViewStamp -and $script:logList.Items.Count -gt 0) {
+    return
+  }
   $script:logList.BeginUpdate()
   try {
     $script:logList.Items.Clear()
@@ -616,6 +645,7 @@ function Update-LogList {
   if ($script:logList.Items.Count -gt 0) {
     $script:logList.TopIndex = $script:logList.Items.Count - 1
   }
+  $script:logViewStamp = $stamp
 }
 
 function Update-WindowStatus {
@@ -648,7 +678,9 @@ function Show-MainWindow {
     $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
   }
   $script:form.Show()
+  $script:logViewStamp = $null
   Update-WindowStatus
+  Update-PollTimer
   $script:form.Activate()
   [void]$script:form.BringToFront()
   $hwnd = $script:form.Handle
@@ -664,6 +696,7 @@ function Hide-MainWindow {
   if (-not $script:form.Visible) {
     $script:form.Show()
   }
+  Update-PollTimer
 }
 
 function Get-PostIdFromLogLine([string]$line) {
@@ -788,6 +821,7 @@ function Reset-PinCaches {
   $script:postsCount = 0
   $script:knownCount = 0
   $script:knownLastId = $null
+  $script:logViewStamp = $null
 }
 
 function Set-BusyButtons([bool]$enabled) {
@@ -1103,7 +1137,7 @@ function New-DataFileWatcher([string]$filter) {
   $w.Filter = $filter
   $w.IncludeSubdirectories = $false
   $w.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size -bor [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::CreationTime
-  $w.InternalBufferSize = 65536
+  $w.InternalBufferSize = 8192
   $w.SynchronizingObject = $script:form
   $w.add_Changed($script:watchHandler)
   $w.add_Created($script:watchHandler)
@@ -1117,7 +1151,7 @@ $script:watchers = @(
 )
 
 $script:timer = New-Object System.Windows.Forms.Timer
-$script:timer.Interval = 3000
+$script:timer.Interval = $script:timerIdleMs
 $script:timer.Add_Tick({
   if ($script:restarting) { return }
   if ($script:botProcess) { $script:botProcess.Refresh() }
@@ -1129,6 +1163,7 @@ $script:timer.Add_Tick({
   }
   Check-NewPosts
   Update-WindowStatus
+  Update-PollTimer
 }) | Out-Null
 $script:timer.Start()
 

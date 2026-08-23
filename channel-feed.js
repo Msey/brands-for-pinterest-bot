@@ -1,7 +1,7 @@
 "use strict";
 
 const { CHANNEL, isValidPostId, parsePostIdToken } = require("./links");
-const { fetchBuffer } = require("./export-pin");
+const { fetchBuffer } = require("./http-fetch");
 
 const PREVIEW_WINDOW = 100;
 const MAX_PREVIEW_BYTES = 512 * 1024;

@@ -3,7 +3,8 @@
 const fs = require("fs");
 const path = require("path");
 const { canonicalUrl, isValidPostId } = require("./links");
-const { exportPost, forgetPinsWithoutData, pruneOldPinDirs } = require("./export-pin");
+const { exportPost } = require("./export-pin");
+const { forgetPinsWithoutData, pruneOldPinDirs } = require("./pin-dirs");
 const {
   PREVIEW_WINDOW,
   fetchLatestPostId,
@@ -130,7 +131,7 @@ async function runAutoImport(options) {
       }
       tried.add(postId);
       try {
-        const exported = await exportFn(postId);
+        await exportFn(postId);
         const added = storage.add({
           url: canonicalUrl(postId),
           postId,
@@ -140,7 +141,6 @@ async function runAutoImport(options) {
         result.ok = true;
         delete result.reason;
         result.postId = postId;
-        result.pin = exported && exported.pin;
         return result;
       } catch (err) {
         console.error("auto_export", postId, err && err.message ? err.message : err);

@@ -11,15 +11,19 @@ const {
   isValidPostId,
 } = require("./links");
 const { PostStorage, parseRecordLine } = require("./storage");
+const http = require("http");
+const { collectPostIds } = require("./export-pin");
+const { fetchToFile, isJpeg } = require("./http-fetch");
 const {
-  collectPostIds,
   forgetPinsWithoutData,
   formatPinJson,
-  isJpeg,
   pinDir,
   PIN_DIR_MAX_PRUNE,
   pruneOldPinDirs,
-} = require("./export-pin");
+} = require("./pin-dirs");
+const { createAccess, isCommandText, isPrivateChat, isValidBotToken, parseAllowList } = require("./access");
+const { RateLimiter } = require("./rate-limit");
+const { startHelpText } = require("./bot-handlers");
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
 const { BOARDS } = require("./boards");
@@ -65,6 +69,24 @@ assert.deepStrictEqual(extractFromUrl("https://user:pass@t.me/kupim_v_usa/9"), [
 assert.deepStrictEqual(extractFromUrl("https://t.me/kupim_v_usa/15"), [
   { postId: 15, url: "https://t.me/kupim_v_usa/15" },
 ]);
+
+assert.strictEqual(isValidBotToken("123456:ABCDEFGHIJKLMNOPQRST"), true);
+assert.strictEqual(isValidBotToken("bad"), false);
+assert.deepStrictEqual([...parseAllowList("7, 8")], [7, 8]);
+assert.strictEqual(parseAllowList(""), null);
+assert.ok(isPrivateChat({ chat: { type: "private", id: 1 } }));
+assert.ok(!isPrivateChat({ chat: { type: "channel", id: 1 } }));
+assert.ok(isCommandText("/list"));
+assert.ok(!isCommandText("https://t.me/kupim_v_usa/1"));
+const access = createAccess("9");
+assert.ok(access.isAllowedUser({ from: { id: 9 } }));
+assert.ok(!access.isAllowedUser({ from: { id: 8 } }));
+assert.ok(startHelpText("kupim_v_usa").includes("/list"));
+const limiter = new RateLimiter({ windowMs: 1000, max: 2, maxKeys: 8 });
+assert.strictEqual(limiter.tooMany(1, 0), false);
+assert.strictEqual(limiter.tooMany(1, 0), false);
+assert.strictEqual(limiter.tooMany(1, 0), true);
+assert.strictEqual(limiter.tooMany(1, 2000), false);
 
 assert.deepStrictEqual(
   extractFromMessage({
@@ -140,6 +162,7 @@ assert.deepStrictEqual(storage.listRecent(10, 999), []);
 assert.strictEqual(storage.count(8), 1);
 assert.strictEqual(storage.count(7), 1);
 assert.strictEqual(storage.count(999), 0);
+assert.deepStrictEqual(storage.listIds().sort((a, b) => a - b), [1, 4, 5]);
 assert.strictEqual(
   JSON.parse(fs.readFileSync(path.join(dir, "last-save.json"), "utf8")).post_id,
   5
@@ -425,24 +448,69 @@ const autoStorage = {
     return true;
   },
 };
-runAutoImport({
-  storage: autoStorage,
-  state: { latestId: 20 },
-  fetchHtml: async () => '<div data-post="kupim_v_usa/20"></div>',
-  exportPost: async (id) => {
-    if (id === 20) throw new Error("нет фото");
-    return { pin: { title: String(id) } };
-  },
-  pruneOldPinDirs: () => ({ removed: [11] }),
-}).then((result) => {
-  assert.strictEqual(result.ok, true);
-  assert.ok(result.postId !== 20);
-  assert.ok(addedIds.includes(result.postId));
-  assert.deepStrictEqual(result.pruned, [11]);
-  fs.rmSync(autoDir, { recursive: true, force: true });
-  console.log("ok");
-}).catch((err) => {
-  fs.rmSync(autoDir, { recursive: true, force: true });
-  console.error(err);
-  process.exit(1);
-});
+function listenLocal(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+function closeServer(server) {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+async function testFetchToFile() {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kupim-fetch-"));
+  const server = http.createServer((req, res) => {
+    if (req.url === "/ok.jpg") {
+      res.writeHead(200, { "Content-Type": "image/jpeg" });
+      res.end(jpeg);
+      return;
+    }
+    res.writeHead(200);
+    res.end("not-jpeg");
+  });
+  try {
+    const port = await listenLocal(server);
+    const okPath = path.join(root, "ok.jpg");
+    const got = await fetchToFile("http://127.0.0.1:" + port + "/ok.jpg", okPath, 1024, { jpeg: true });
+    assert.strictEqual(got.bytes, jpeg.length);
+    assert.ok(isJpeg(fs.readFileSync(okPath)));
+    await assert.rejects(() =>
+      fetchToFile("http://127.0.0.1:" + port + "/bad", path.join(root, "bad.jpg"), 1024, { jpeg: true })
+    );
+    assert.ok(!fs.existsSync(path.join(root, "bad.jpg")));
+    assert.ok(!fs.existsSync(path.join(root, "bad.jpg.part")));
+  } finally {
+    await closeServer(server);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+testFetchToFile()
+  .then(() =>
+    runAutoImport({
+      storage: autoStorage,
+      state: { latestId: 20 },
+      fetchHtml: async () => '<div data-post="kupim_v_usa/20"></div>',
+      exportPost: async (id) => {
+        if (id === 20) throw new Error("нет фото");
+        return { pin: { title: String(id) } };
+      },
+      pruneOldPinDirs: () => ({ removed: [11] }),
+    })
+  )
+  .then((result) => {
+    assert.strictEqual(result.ok, true);
+    assert.ok(result.postId !== 20);
+    assert.ok(addedIds.includes(result.postId));
+    assert.deepStrictEqual(result.pruned, [11]);
+    fs.rmSync(autoDir, { recursive: true, force: true });
+    console.log("ok");
+  })
+  .catch((err) => {
+    fs.rmSync(autoDir, { recursive: true, force: true });
+    console.error(err);
+    process.exit(1);
+  });

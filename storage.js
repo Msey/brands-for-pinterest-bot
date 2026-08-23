@@ -61,7 +61,6 @@ class PostStorage {
     }
     this.path = path.resolve(filePath);
     this.ids = new Set();
-    this._recordsCache = null;
     this._ensureFile();
     this._loadIds();
   }
@@ -84,31 +83,49 @@ class PostStorage {
 
   _loadIds() {
     this.ids = new Set();
-    for (const record of this.readRecords()) {
+    this.forEachRecord((record) => {
       this.ids.add(record.post_id);
+    });
+  }
+
+  _readFileText() {
+    this._ensureFile();
+    try {
+      const buf = fs.readFileSync(this.path);
+      return buf.slice(0, MAX_FILE_BYTES).toString("utf8");
+    } catch (err) {
+      if (err && err.code === "ENOENT") return "";
+      throw err;
+    }
+  }
+
+  forEachRecord(fn) {
+    if (typeof fn !== "function") return;
+    const text = this._readFileText();
+    let start = 0;
+    while (start < text.length) {
+      let end = text.indexOf("\n", start);
+      if (end === -1) end = text.length;
+      let line = text.slice(start, end);
+      start = end + 1;
+      if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const record = parseRecordLine(trimmed);
+      if (record) fn(record);
     }
   }
 
   readRecords() {
-    if (this._recordsCache) return this._recordsCache;
-    this._ensureFile();
-    let text = "";
-    try {
-      const buf = fs.readFileSync(this.path);
-      text = buf.slice(0, MAX_FILE_BYTES).toString("utf8");
-    } catch (err) {
-      if (err && err.code === "ENOENT") return [];
-      throw err;
-    }
     const records = [];
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const record = parseRecordLine(trimmed);
-      if (record) records.push(record);
-    }
-    this._recordsCache = records;
+    this.forEachRecord((row) => {
+      records.push(row);
+    });
     return records;
+  }
+
+  listIds() {
+    return Array.from(this.ids);
   }
 
   has(postId) {
@@ -136,7 +153,6 @@ class PostStorage {
     }
     fs.appendFileSync(this.path, line, "utf8");
     this.ids.add(id);
-    if (this._recordsCache) this._recordsCache.push(record);
     this._writeLastSave(id, record.saved_at);
     return true;
   }
@@ -151,7 +167,6 @@ class PostStorage {
     }
     this._ensureFile();
     fs.writeFileSync(this.path, body, "utf8");
-    this._recordsCache = rows;
     this.ids = new Set(rows.map((row) => row.post_id));
   }
 
@@ -187,18 +202,25 @@ class PostStorage {
     if (userId === undefined) return this.ids.size;
     const uid = sanitizeUserId(userId);
     if (uid === null) return 0;
-    return this.readRecords().filter((row) => row.from_user_id === uid).length;
+    let n = 0;
+    this.forEachRecord((row) => {
+      if (row.from_user_id === uid) n += 1;
+    });
+    return n;
   }
 
   listRecent(limit = 10, userId) {
     const n = Math.floor(Number(limit));
     if (!Number.isFinite(n) || n <= 0) return [];
-    let records = this.readRecords();
+    const max = Math.min(n, 50);
     const uid = sanitizeUserId(userId);
-    if (uid !== null) {
-      records = records.filter((row) => row.from_user_id === uid);
-    }
-    return records.slice(-Math.min(n, 50));
+    const recent = [];
+    this.forEachRecord((row) => {
+      if (uid !== null && row.from_user_id !== uid) return;
+      recent.push(row);
+      if (recent.length > max) recent.shift();
+    });
+    return recent;
   }
 }
 

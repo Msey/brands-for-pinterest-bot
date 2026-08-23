@@ -459,10 +459,20 @@ function formatDescription(entry) {
 }
 
 function bestMatch(entries, ctx) {
-  const hits = entries.filter((entry) => ruleFits(entry, ctx));
-  if (!hits.length) return null;
-  hits.sort((a, b) => score(b) - score(a) || String(a.id).localeCompare(String(b.id)));
-  return hits[0];
+  let best = null;
+  let bestScore = -1;
+  let bestId = "";
+  for (const entry of entries) {
+    if (!ruleFits(entry, ctx)) continue;
+    const value = score(entry);
+    const id = String(entry.id || "");
+    if (value > bestScore || (value === bestScore && id < bestId)) {
+      best = entry;
+      bestScore = value;
+      bestId = id;
+    }
+  }
+  return best;
 }
 
 const BRANDED_RULES = DESCRIPTIONS.filter(hasBrandConstraint);

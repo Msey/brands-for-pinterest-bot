@@ -161,7 +161,8 @@ function extractPhotoUrl(html) {
 
 function extractCaptionHtml(html) {
   const match = /<div class="tgme_widget_message_text[^"]*"[\s\S]*?>([\s\S]*?)<\/div>/i.exec(html);
-  return match ? match[1] : html;
+  if (match) return match[1];
+  return html.length > 64 * 1024 ? html.slice(0, 64 * 1024) : html;
 }
 
 function parseAudience(text) {

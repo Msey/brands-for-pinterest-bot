@@ -1,6 +1,6 @@
 "use strict";
 
-const { formatPinJson } = require("./export-pin");
+const { formatPinJson } = require("./pin-dirs");
 
 const TG_MAX_LEN = 4000;
 
