@@ -146,6 +146,8 @@ $script:fontBody = $null
 $script:watchHandler = $null
 $script:activateEvent = $null
 $script:activateTimer = $null
+$script:hidingWindow = $false
+$script:fontUi = $null
 
 $MutexName = "Local\TelegramKupimBotTray"
 $ActivateEventName = "Local\TelegramKupimBotTrayActivate"
@@ -668,18 +670,38 @@ function Test-MainWindowOpen {
     $script:form -and
     -not $script:form.IsDisposed -and
     $script:form.Visible -and
-    $script:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal
+    $script:form.WindowState -ne [System.Windows.Forms.FormWindowState]::Minimized
   )
 }
 
+function Repair-WatcherSync {
+  if (-not $script:form -or $script:form.IsDisposed) { return }
+  foreach ($w in @($script:watchers)) {
+    if (-not $w) { continue }
+    try {
+      $w.SynchronizingObject = $script:form
+    }
+    catch { }
+  }
+}
+
 function Show-MainWindow {
-  $script:form.ShowInTaskbar = $true
+  if (-not $script:form -or $script:form.IsDisposed -or $script:hidingWindow) { return }
+  $alreadyOpen = Test-MainWindowOpen
+  if (-not $script:form.ShowInTaskbar) {
+    $script:form.ShowInTaskbar = $true
+    Repair-WatcherSync
+  }
   if ($script:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
     $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
   }
-  $script:form.Show()
-  $script:logViewStamp = $null
-  Update-WindowStatus
+  if (-not $script:form.Visible) {
+    $script:form.Show()
+  }
+  if (-not $alreadyOpen) {
+    $script:logViewStamp = $null
+    Update-WindowStatus
+  }
   Update-PollTimer
   $script:form.Activate()
   [void]$script:form.BringToFront()
@@ -691,10 +713,26 @@ function Show-MainWindow {
 }
 
 function Hide-MainWindow {
-  $script:form.ShowInTaskbar = $true
-  $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
-  if (-not $script:form.Visible) {
-    $script:form.Show()
+  if (-not $script:form -or $script:form.IsDisposed -or $script:allowExit) { return }
+  if ($script:hidingWindow) { return }
+  $alreadyHidden = (-not $script:form.Visible -and -not $script:form.ShowInTaskbar)
+  if ($alreadyHidden) {
+    Update-PollTimer
+    return
+  }
+  $script:hidingWindow = $true
+  try {
+    if ($script:form.ShowInTaskbar) {
+      $script:form.ShowInTaskbar = $false
+      Repair-WatcherSync
+    }
+    $script:form.Hide()
+    if ($script:form.WindowState -ne [System.Windows.Forms.FormWindowState]::Normal) {
+      $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+    }
+  }
+  finally {
+    $script:hidingWindow = $false
   }
   Update-PollTimer
 }
@@ -1023,10 +1061,11 @@ $script:form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScr
 $script:form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
 $script:form.MaximizeBox = $false
 $script:form.MinimizeBox = $true
-$script:form.ShowInTaskbar = $true
-$script:form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
+$script:form.ShowInTaskbar = $false
+$script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
 $script:form.Icon = $script:icon
-$script:form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$script:fontUi = New-Object System.Drawing.Font("Segoe UI", 10)
+$script:form.Font = $script:fontUi
 
 $script:statusLabel = New-Object System.Windows.Forms.Label
 $script:statusLabel.Location = New-Object System.Drawing.Point(20, 20)
@@ -1076,6 +1115,14 @@ $script:form.Controls.Add($script:logList)
 $script:form.Controls.Add($btnFolder)
 $script:form.Controls.Add($script:btnRestart)
 $script:form.Controls.Add($script:btnClear)
+
+$script:form.Add_Resize({
+  if ($script:hidingWindow -or $script:allowExit) { return }
+  if (-not $script:form -or $script:form.IsDisposed) { return }
+  if ($script:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+    Hide-MainWindow
+  }
+}) | Out-Null
 
 $script:form.Add_FormClosing({
   param($sender, $e)
@@ -1216,6 +1263,14 @@ finally {
   }
   if ($script:fontTitle) { $script:fontTitle.Dispose() }
   if ($script:fontBody) { $script:fontBody.Dispose() }
+  if ($script:form -and -not $script:form.IsDisposed) {
+    try { $script:form.Dispose() } catch { }
+  }
+  $script:form = $null
+  if ($script:fontUi) {
+    try { $script:fontUi.Dispose() } catch { }
+    $script:fontUi = $null
+  }
   Stop-BotProcesses
   if ($mutex) {
     try { $mutex.ReleaseMutex() } catch { }
