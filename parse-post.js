@@ -205,38 +205,6 @@ function classifyProduct(name) {
   return { name: raw, type: "", category: "", boardKind: "", model: raw };
 }
 
-function brandTags(brand) {
-  const lower = String(brand || "").toLowerCase();
-  if (/air\s*jordan|\bjordan\b/.test(lower)) return ["nike"];
-  if (/\bnike\b/.test(lower)) return ["nike"];
-  if (/calvin\s*klein/.test(lower)) return ["calvin klein"];
-  if (/michael\s*kors/.test(lower)) return ["michael kors"];
-  if (/lacoste/.test(lower)) return ["lacoste"];
-  if (/timberland/.test(lower)) return ["timberland"];
-  if (/polo/.test(lower)) return ["polo"];
-  if (/saint\s*laurent|\bysl\b/.test(lower)) return ["saint laurent"];
-  if (/ray-?ban/.test(lower)) return ["ray ban"];
-  const cleaned = lower.replace(/[^a-zа-яё0-9\s.-]/gi, " ").replace(/\s+/g, " ").trim();
-  if (cleaned.length >= 2 && cleaned.length <= 32) return [cleaned];
-  return [];
-}
-
-function buildTags({ brand, product, audience }) {
-  const tags = [];
-  const seen = new Set();
-  function add(tag) {
-    const value = String(tag || "").trim().toLowerCase();
-    if (!value || value.length > 32 || seen.has(value)) return;
-    seen.add(value);
-    tags.push(value);
-  }
-  for (const tag of brandTags(brand)) add(tag);
-  if (product.type) add(product.type);
-  if (product.category && product.category !== product.type) add(product.category);
-  if (audience.tag) add(audience.tag);
-  return tags.slice(0, 6);
-}
-
 function buildTitle({ brand, product, audience }) {
   const gender = audience.titleWord;
   const type = product.type;
@@ -278,7 +246,6 @@ function parseCaptionHtml(captionHtml, options) {
     title: buildTitle({ brand, product: primary, audience }),
     description: buildDescription({ brand, product: primary, audience }),
     link: canonicalUrl(postId),
-    tags: buildTags({ brand, product: primary, audience }),
   };
   const board = inferBoard(primary, audience.key);
   if (board) pin.board = board;

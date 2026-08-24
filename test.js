@@ -216,7 +216,8 @@ assert.ok(parsed47039.pin.description.includes("Nike Air Max"));
 assert.ok(!parsed47039.pin.description.includes("11800₽"));
 assert.ok(!parsed47039.pin.description.includes("723660"));
 assert.ok(!parsed47039.pin.description.includes("zakaz_managers"));
-assert.deepStrictEqual(parsed47039.pin.tags, ["nike", "кроссовки", "обувь", "унисекс"]);
+assert.strictEqual(parsed47039.pin.tags, undefined);
+assert.ok(!Object.prototype.hasOwnProperty.call(parsed47039.pin, "tags"));
 assert.strictEqual(parsed47039.pin.board, undefined);
 
 const html46991 = `<b>Calvin Klein</b> 🇺🇸<br><br><a href="https://www.calvinklein.us/en/jacket.html">Куртка</a> (мужской раздел)<br><b><s>21500₽</s> ➡️ 7800₽ + доставка</b><br>M, XL, 2XL<br><br>ID: <code>723414</code>`;
@@ -224,9 +225,7 @@ const pin46991 = parseCaptionHtml(html46991, { postId: 46991 });
 assert.strictEqual(pin46991.title, "Calvin Klein — мужские куртка | оригинал из США");
 assert.strictEqual(pin46991.link, "https://t.me/kupim_v_usa/46991");
 assert.strictEqual(pin46991.board, BOARDS.jackets);
-assert.ok(pin46991.tags.includes("calvin klein"));
-assert.ok(pin46991.tags.includes("куртка"));
-assert.ok(pin46991.tags.includes("мужские"));
+assert.strictEqual(pin46991.tags, undefined);
 assert.ok(pin46991.description.includes("Calvin Klein куртки"));
 assert.ok(!pin46991.description.includes("7800₽"));
 
