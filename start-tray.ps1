@@ -106,6 +106,34 @@ public class TrayPopupForm : Form {
     }
   }
 }
+public class TrayMainForm : Form {
+  public bool AllowClose;
+  public event EventHandler HideToTrayRequested;
+  void RequestHideToTray() {
+    EventHandler handler = HideToTrayRequested;
+    if (handler != null) handler(this, EventArgs.Empty);
+  }
+  protected override void WndProc(ref Message m) {
+    const int WM_CLOSE = 0x0010;
+    const int WM_SYSCOMMAND = 0x0112;
+    const int SC_CLOSE = 0xF060;
+    const int SC_MINIMIZE = 0xF020;
+    if (!AllowClose) {
+      if (m.Msg == WM_CLOSE) {
+        RequestHideToTray();
+        return;
+      }
+      if (m.Msg == WM_SYSCOMMAND) {
+        int cmd = (int)(m.WParam.ToInt64() & 0xFFF0);
+        if (cmd == SC_CLOSE || cmd == SC_MINIMIZE) {
+          RequestHideToTray();
+          return;
+        }
+      }
+    }
+    base.WndProc(ref m);
+  }
+}
 "@
 
 $Root = $PSScriptRoot
@@ -148,6 +176,7 @@ $script:activateEvent = $null
 $script:activateTimer = $null
 $script:hidingWindow = $false
 $script:fontUi = $null
+$script:hideToTrayHandler = $null
 
 $MutexName = "Local\TelegramKupimBotTray"
 $ActivateEventName = "Local\TelegramKupimBotTrayActivate"
@@ -722,11 +751,13 @@ function Hide-MainWindow {
   }
   $script:hidingWindow = $true
   try {
+    if ($script:form.Visible) {
+      $script:form.Hide()
+    }
     if ($script:form.ShowInTaskbar) {
       $script:form.ShowInTaskbar = $false
       Repair-WatcherSync
     }
-    $script:form.Hide()
     if ($script:form.WindowState -ne [System.Windows.Forms.FormWindowState]::Normal) {
       $script:form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
     }
@@ -986,7 +1017,10 @@ function Restart-Bot {
 
 function Exit-App {
   $script:allowExit = $true
-  if ($script:form) { $script:form.Close() }
+  if ($script:form -and -not $script:form.IsDisposed) {
+    $script:form.AllowClose = $true
+    $script:form.Close()
+  }
   [System.Windows.Forms.Application]::Exit()
 }
 
@@ -1054,7 +1088,8 @@ $script:icon = Get-AppIcon
 $script:fontTitle = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $script:fontBody = New-Object System.Drawing.Font("Segoe UI", 9)
 
-$script:form = New-Object System.Windows.Forms.Form
+$script:form = New-Object TrayMainForm
+$script:form.AllowClose = $false
 $script:form.Text = $AppTitle
 $script:form.Size = New-Object System.Drawing.Size(720, 460)
 $script:form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -1115,6 +1150,9 @@ $script:form.Controls.Add($script:logList)
 $script:form.Controls.Add($btnFolder)
 $script:form.Controls.Add($script:btnRestart)
 $script:form.Controls.Add($script:btnClear)
+
+$script:hideToTrayHandler = { Hide-MainWindow }
+$script:form.add_HideToTrayRequested($script:hideToTrayHandler)
 
 $script:form.Add_Resize({
   if ($script:hidingWindow -or $script:allowExit) { return }
@@ -1263,6 +1301,10 @@ finally {
   }
   if ($script:fontTitle) { $script:fontTitle.Dispose() }
   if ($script:fontBody) { $script:fontBody.Dispose() }
+  if ($script:form -and $script:hideToTrayHandler) {
+    try { $script:form.remove_HideToTrayRequested($script:hideToTrayHandler) } catch { }
+    $script:hideToTrayHandler = $null
+  }
   if ($script:form -and -not $script:form.IsDisposed) {
     try { $script:form.Dispose() } catch { }
   }
