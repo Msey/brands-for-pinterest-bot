@@ -5,7 +5,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const { CHANNEL } = require("./links");
 const { PostStorage } = require("./storage");
 const { exportPost } = require("./export-pin");
-const { forgetPinsWithoutData, loadPinData } = require("./pin-dirs");
+const { loadPinData } = require("./pin-dirs");
 const { postIdFromChannelPost } = require("./channel-feed");
 const { loadAutoState, rememberLatestId, runAutoImport, saveAutoState } = require("./auto-import");
 const { commandPattern, createAccess, isValidBotToken } = require("./access");
@@ -72,15 +72,6 @@ function main(options) {
   const access = opts.access || createAccess(process.env.BOT_ALLOW_USER_IDS);
   const limiter = opts.rateLimiter || new RateLimiter({ windowMs: RATE_WINDOW_MS, max: 30 });
   const autoState = opts.autoState || loadAutoState(AUTO_STATE_FILE);
-
-  try {
-    const gone = forgetPinsWithoutData(storage);
-    if (gone.length) {
-      console.log("sync: нет папок, убраны из базы", gone.join(", "));
-    }
-  } catch (err) {
-    console.error("sync_pins", err && err.message ? err.message : err);
-  }
 
   function persistAutoState() {
     try {

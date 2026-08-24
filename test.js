@@ -446,6 +446,10 @@ const autoStorage = {
     addedIds.push(postId);
     return true;
   },
+  listIds() { return [11]; },
+  removeMany() {
+    throw new Error("jsonl must stay after folder prune");
+  },
 };
 function listenLocal(server) {
   return new Promise((resolve, reject) => {

@@ -177,6 +177,9 @@ $script:activateTimer = $null
 $script:hidingWindow = $false
 $script:fontUi = $null
 $script:hideToTrayHandler = $null
+$script:fontLogStrike = $null
+$script:logBackBrush = $null
+$script:logTextBrush = $null
 
 $MutexName = "Local\TelegramKupimBotTray"
 $ActivateEventName = "Local\TelegramKupimBotTrayActivate"
@@ -614,13 +617,43 @@ function Check-NewPosts {
   }
 }
 
+function Test-PinDataExists([string]$postId) {
+  if ($postId -notmatch '^\d{1,16}$') { return $false }
+  $file = Join-Path $Root (Join-Path "pin-templates" (Join-Path $postId "data.json"))
+  try {
+    return [System.IO.File]::Exists($file)
+  }
+  catch {
+    return $false
+  }
+}
+
+function Test-LogLineMissingPin([string]$line) {
+  if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+  if ($line.StartsWith("PS>")) { return $false }
+  $id = Get-PostIdFromLogLine $line
+  if (-not $id) { return $false }
+  return -not (Test-PinDataExists $id)
+}
+
+function Get-MissingPinIdsStamp {
+  $gone = New-Object System.Collections.Generic.List[string]
+  foreach ($line in @($script:postLinesCache)) {
+    $id = Get-PostIdFromLogLine $line
+    if ($id -and -not (Test-PinDataExists $id)) {
+      [void]$gone.Add([string]$id)
+    }
+  }
+  return [string]::Join(",", $gone)
+}
+
 function Get-LogViewStamp {
   $notes = @($script:consoleNotes)
   $lastNote = ""
   if ($notes.Count -gt 0) {
     $lastNote = [string]$notes[$notes.Count - 1]
   }
-  return "$($script:postsStamp)|$($notes.Count)|$lastNote"
+  return "$($script:postsStamp)|$($notes.Count)|$lastNote|$(Get-MissingPinIdsStamp)"
 }
 
 function Update-PollTimer {
@@ -849,16 +882,6 @@ function Test-LinkLikeDir([string]$dir) {
   return [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
 }
 
-function Reset-PostsStorage {
-  $data = Split-Path -Parent $PostsFile
-  New-Item -ItemType Directory -Force -Path $data | Out-Null
-  [System.IO.File]::WriteAllText($PostsFile, "")
-  $lastSave = Join-Path $data "last-save.json"
-  if (Test-Path -LiteralPath $lastSave -PathType Leaf) {
-    Remove-Item -LiteralPath $lastSave -Force
-  }
-}
-
 function Clear-PinTemplateFolders {
   $root = Join-Path $Root "pin-templates"
   if (-not (Test-Path -LiteralPath $root -PathType Container)) {
@@ -884,12 +907,7 @@ function Clear-PinTemplateFolders {
   return @{ Removed = $removed; Failed = $failed }
 }
 
-function Reset-PinCaches {
-  $script:postLinesCache = @()
-  $script:postsStamp = $null
-  $script:postsCount = 0
-  $script:knownCount = 0
-  $script:knownLastId = $null
+function Reset-PinFolderView {
   $script:logViewStamp = $null
 }
 
@@ -901,7 +919,7 @@ function Set-BusyButtons([bool]$enabled) {
 function Clear-AllPinData {
   if ($script:restarting -or $script:clearing) { return }
   $confirm = [System.Windows.Forms.MessageBox]::Show(
-    "Удалить все записи о пинах и папки pin-templates? Это нельзя отменить.",
+    "Удалить папки pin-templates? Записи в списке останутся зачёркнутыми. Это нельзя отменить.",
     $AppTitle,
     [System.Windows.Forms.MessageBoxButtons]::YesNo,
     [System.Windows.Forms.MessageBoxIcon]::Warning,
@@ -926,11 +944,10 @@ function Clear-AllPinData {
     Stop-BotProcesses
     Start-Sleep -Milliseconds 400
 
-    Reset-PostsStorage
     $folders = Clear-PinTemplateFolders
-    Reset-PinCaches
+    Reset-PinFolderView
 
-    $note = "очищены все пины: $saved записей, $($folders.Removed) папок"
+    $note = "удалены папки пинов: $($folders.Removed), записи в списке: $saved"
     if ($folders.Failed -gt 0) {
       $note = "$note, не удалено $($folders.Failed)"
     }
@@ -947,7 +964,7 @@ function Clear-AllPinData {
     }
 
     Update-WindowStatus
-    Show-TrayPopup -Title $AppTitle -Text "Все данные пинов удалены" -TimeoutMs 4000
+    Show-TrayPopup -Title $AppTitle -Text "Папки пинов удалены, список сохранён" -TimeoutMs 4000
   }
   catch {
     Add-ConsoleNote "ошибка очистки: $($_.Exception.Message)"
@@ -1121,6 +1138,34 @@ $script:logList.Font = New-Object System.Drawing.Font("Consolas", 9)
 $script:logList.BackColor = [System.Drawing.Color]::FromArgb(1, 36, 86)
 $script:logList.ForeColor = [System.Drawing.Color]::White
 $script:logList.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$script:logList.DrawMode = [System.Windows.Forms.DrawMode]::OwnerDrawFixed
+$script:logList.ItemHeight = [Math]::Max(16, $script:logList.Font.Height)
+$script:fontLogStrike = New-Object System.Drawing.Font($script:logList.Font, [System.Drawing.FontStyle]::Strikeout)
+$script:logBackBrush = New-Object System.Drawing.SolidBrush($script:logList.BackColor)
+$script:logTextBrush = New-Object System.Drawing.SolidBrush($script:logList.ForeColor)
+$script:logList.Add_DrawItem({
+  param($sender, $e)
+  if ($e.Index -lt 0) { return }
+  $g = $e.Graphics
+  $item = [string]$sender.Items[$e.Index]
+  $selected = ($e.State -band [System.Windows.Forms.DrawItemState]::Selected) -ne 0
+  if ($selected) {
+    $g.FillRectangle([System.Drawing.SystemBrushes]::Highlight, $e.Bounds)
+  }
+  else {
+    $g.FillRectangle($script:logBackBrush, $e.Bounds)
+  }
+  $font = $sender.Font
+  if (Test-LogLineMissingPin $item) {
+    $font = $script:fontLogStrike
+  }
+  $brush = $script:logTextBrush
+  if ($selected) {
+    $brush = [System.Drawing.SystemBrushes]::HighlightText
+  }
+  $g.DrawString($item, $font, $brush, [System.Drawing.RectangleF]$e.Bounds)
+  $e.DrawFocusRectangle()
+}) | Out-Null
 $script:logList.Add_DoubleClick({
   if ($null -eq $script:logList.SelectedItem) { return }
   Open-PostFolderFromLogLine ([string]$script:logList.SelectedItem)
@@ -1309,6 +1354,18 @@ finally {
     try { $script:form.Dispose() } catch { }
   }
   $script:form = $null
+  if ($script:fontLogStrike) {
+    try { $script:fontLogStrike.Dispose() } catch { }
+    $script:fontLogStrike = $null
+  }
+  if ($script:logBackBrush) {
+    try { $script:logBackBrush.Dispose() } catch { }
+    $script:logBackBrush = $null
+  }
+  if ($script:logTextBrush) {
+    try { $script:logTextBrush.Dispose() } catch { }
+    $script:logTextBrush = $null
+  }
   if ($script:fontUi) {
     try { $script:fontUi.Dispose() } catch { }
     $script:fontUi = $null
