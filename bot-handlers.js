@@ -10,14 +10,17 @@ function startHelpText(channel) {
   return (
     "Пришлите ссылку на пост из t.me/" +
     name +
-    " — сохраню ссылку и папку с data.json и фото для Pinterest.\n\n" +
+    " или перешлите пост из канала — сохраню ссылку и папку с data.json и фото для Pinterest.\n\n" +
     "Примеры:\n" +
     "https://t.me/" +
     name +
     "/123\n" +
     "t.me/" +
     name +
-    "/123\n\n" +
+    "/123\n" +
+    "или «Переслать» пост из @" +
+    name +
+    "\n\n" +
     "/list — последние 10 ссылок\n" +
     "/count — сколько уже сохранено"
   );
@@ -26,9 +29,9 @@ function startHelpText(channel) {
 function needLinkText(channel) {
   const name = channel || CHANNEL;
   return (
-    "Нужна ссылка на пост группы t.me/" +
+    "Нужна ссылка на пост t.me/" +
     name +
-    ", например:\nhttps://t.me/" +
+    " или перешлите пост из этого канала, например:\nhttps://t.me/" +
     name +
     "/123"
   );
@@ -113,7 +116,7 @@ function createHandlers(deps) {
     async list(msg) {
       const records = storage.listRecent(listLimit, msg.from && msg.from.id);
       if (!records.length) {
-        await messenger.reply(msg.chat.id, "Пока пусто. Пришлите ссылку на пост.");
+        await messenger.reply(msg.chat.id, "Пока пусто. Пришлите ссылку или перешлите пост.");
         return;
       }
       const lines = records.map((item) => `${item.post_id}: ${item.url}`);

@@ -6,6 +6,7 @@ const path = require("path");
 const PIN_DIR_MAX_AGE_MS = 5 * 60 * 60 * 1000;
 const PIN_DIR_MAX_PRUNE = 32;
 const PIN_DIR_ID = /^\d{1,16}$/;
+const MAX_PIN_JSON_BYTES = 64 * 1024;
 
 function formatPinJson(pin) {
   return JSON.stringify(pin, null, 2) + "\n";
@@ -125,6 +126,8 @@ function loadPinData(postId, root) {
   const file = pinDataPath(postId, root);
   if (!file) return null;
   try {
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > MAX_PIN_JSON_BYTES) return null;
     const raw = fs.readFileSync(file, "utf8");
     const data = JSON.parse(raw);
     if (!data || typeof data !== "object" || Array.isArray(data)) return null;

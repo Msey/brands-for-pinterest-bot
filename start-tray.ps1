@@ -160,6 +160,7 @@ $script:postsCount = 0
 $script:knownCount = 0
 $script:knownLastId = $null
 $script:logViewStamp = $null
+$script:missingPinIds = New-Object 'System.Collections.Generic.HashSet[string]'
 $script:timerIdleMs = 10000
 $script:timerActiveMs = 4000
 $script:watchers = @()
@@ -633,15 +634,18 @@ function Test-LogLineMissingPin([string]$line) {
   if ($line.StartsWith("PS>")) { return $false }
   $id = Get-PostIdFromLogLine $line
   if (-not $id) { return $false }
-  return -not (Test-PinDataExists $id)
+  return $script:missingPinIds.Contains([string]$id)
 }
 
 function Get-MissingPinIdsStamp {
   $gone = New-Object System.Collections.Generic.List[string]
+  $script:missingPinIds.Clear()
   foreach ($line in @($script:postLinesCache)) {
     $id = Get-PostIdFromLogLine $line
     if ($id -and -not (Test-PinDataExists $id)) {
-      [void]$gone.Add([string]$id)
+      $token = [string]$id
+      [void]$gone.Add($token)
+      [void]$script:missingPinIds.Add($token)
     }
   }
   return [string]::Join(",", $gone)
@@ -909,6 +913,7 @@ function Clear-PinTemplateFolders {
 
 function Reset-PinFolderView {
   $script:logViewStamp = $null
+  if ($script:missingPinIds) { $script:missingPinIds.Clear() }
 }
 
 function Set-BusyButtons([bool]$enabled) {

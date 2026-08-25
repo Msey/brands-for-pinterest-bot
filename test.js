@@ -17,6 +17,7 @@ const { fetchToFile, isJpeg } = require("./http-fetch");
 const {
   forgetPinsWithoutData,
   formatPinJson,
+  loadPinData,
   pinDir,
   PIN_DIR_MAX_PRUNE,
   pruneOldPinDirs,
@@ -27,7 +28,7 @@ const { startHelpText } = require("./bot-handlers");
 const { extractPhotoUrl, isShopUrl, parseCaptionHtml, parseEmbedHtml } = require("./parse-post");
 const { buildReplyWithJson } = require("./tg-html");
 const { BOARDS } = require("./boards");
-const { inferDescription, MISSING_DESCRIPTION } = require("./descriptions");
+const { inferDescription, MISSING_DESCRIPTION, DESCRIPTIONS } = require("./descriptions");
 const {
   isOurChannelPost,
   listRecentCandidateIds,
@@ -82,11 +83,18 @@ const access = createAccess("9");
 assert.ok(access.isAllowedUser({ from: { id: 9 } }));
 assert.ok(!access.isAllowedUser({ from: { id: 8 } }));
 assert.ok(startHelpText("kupim_v_usa").includes("/list"));
+assert.ok(startHelpText("kupim_v_usa").includes("перешлите"));
 const limiter = new RateLimiter({ windowMs: 1000, max: 2, maxKeys: 8 });
 assert.strictEqual(limiter.tooMany(1, 0), false);
 assert.strictEqual(limiter.tooMany(1, 0), false);
 assert.strictEqual(limiter.tooMany(1, 0), true);
 assert.strictEqual(limiter.tooMany(1, 2000), false);
+const cappedLimiter = new RateLimiter({ windowMs: 10000, max: 100, maxKeys: 2 });
+assert.strictEqual(cappedLimiter.tooMany(1, 0), false);
+assert.strictEqual(cappedLimiter.tooMany(2, 0), false);
+assert.strictEqual(cappedLimiter.tooMany(3, 0), false);
+assert.ok(cappedLimiter.hits.size <= 2);
+assert.strictEqual(cappedLimiter.tooMany(null, 0), true);
 
 assert.deepStrictEqual(
   extractFromMessage({
@@ -113,6 +121,79 @@ assert.deepStrictEqual(
   extractFromMessage({
     text: "x",
     entities: [{ type: "text_link", offset: 0, length: 1, url: "javascript:alert(1)" }],
+  }),
+  []
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    caption: "фото без ссылки",
+    forward_from_chat: { type: "channel", username: "kupim_v_usa" },
+    forward_from_message_id: 47039,
+  }),
+  [{ postId: 47039, url: "https://t.me/kupim_v_usa/47039" }]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_origin: {
+      type: "channel",
+      chat: { type: "channel", username: "@KUPIM_V_USA" },
+      message_id: 88,
+    },
+  }),
+  [{ postId: 88, url: "https://t.me/kupim_v_usa/88" }]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    text: "https://t.me/kupim_v_usa/15",
+    forward_from_chat: { type: "channel", username: "kupim_v_usa" },
+    forward_from_message_id: 15,
+  }),
+  [{ postId: 15, url: "https://t.me/kupim_v_usa/15" }]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    text: "https://t.me/kupim_v_usa/16",
+    forward_from_chat: { type: "channel", username: "kupim_v_usa" },
+    forward_from_message_id: 15,
+  }),
+  [
+    { postId: 15, url: "https://t.me/kupim_v_usa/15" },
+    { postId: 16, url: "https://t.me/kupim_v_usa/16" },
+  ]
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_from_chat: { type: "channel", username: "other_shop" },
+    forward_from_message_id: 1,
+  }),
+  []
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_from_chat: { type: "supergroup", username: "kupim_v_usa" },
+    forward_from_message_id: 1,
+  }),
+  []
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_from: { id: 1, is_bot: false, first_name: "Ann" },
+    forward_from_message_id: 1,
+    text: "привет",
+  }),
+  []
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_origin: { type: "user", sender_user: { id: 1 }, date: 1 },
+    caption: "кроссовки",
+  }),
+  []
+);
+assert.deepStrictEqual(
+  extractFromMessage({
+    forward_from_chat: { type: "channel", username: "kupim_v_usa" },
+    forward_from_message_id: 0,
   }),
   []
 );
@@ -194,6 +275,12 @@ assert.strictEqual(syncStore.add({ url: "https://t.me/kupim_v_usa/32", postId: 3
 assert.deepStrictEqual(forgetPinsWithoutData(syncStore, { root: pinRoot, keepIds: [] }).sort((a, b) => a - b), [32]);
 assert.ok(syncStore.has(31));
 assert.ok(!syncStore.has(32));
+assert.deepStrictEqual(loadPinData(31, pinRoot), {});
+const hugePin = path.join(pinRoot, "99");
+fs.mkdirSync(hugePin, { recursive: true });
+fs.writeFileSync(path.join(hugePin, "data.json"), "x".repeat(65 * 1024));
+assert.strictEqual(loadPinData(99, pinRoot), null);
+assert.strictEqual(loadPinData("nope", pinRoot), null);
 fs.rmSync(rmDir, { recursive: true, force: true });
 
 fs.rmSync(dir, { recursive: true, force: true });
@@ -272,6 +359,11 @@ assert.ok(pinGucciLip.description.includes("помада Gucci"));
 assert.strictEqual(pinGucciLip.board, BOARDS.cosmetics);
 assert.strictEqual(pinGucciLip.title, "Gucci — женские помада | оригинал из США");
 
+const htmlNullBrand = `<b>Nike&#0;</b> 🇺🇸<br><br><a href="https://www.nike.com/t/air">Кроссовки</a> унисекс<br>ID: <code>8</code>`;
+const pinNullBrand = parseCaptionHtml(htmlNullBrand, { postId: 18 });
+assert.ok(pinNullBrand.title.startsWith("Nike"));
+assert.ok(!pinNullBrand.title.includes("\0"));
+
 assert.ok(
   inferDescription({
     brand: "Adidas",
@@ -307,6 +399,13 @@ assert.ok(
     product: { name: "Платье", type: "платье", boardKind: "одежда" },
     audience: { key: "women" },
   }).includes("DKNY платья")
+);
+assert.ok(DESCRIPTIONS.every((row) => !String(row.cta || "").includes("Открыть веб-сайт")));
+assert.ok(
+  inferDescription({
+    brand: "Nike",
+    product: { name: "Кроссовки", type: "кроссовки", boardKind: "обувь" },
+  }).includes("«Перейти»")
 );
 
 assert.strictEqual(BOARDS.accessories, "Аксессуары");
@@ -471,6 +570,11 @@ async function testFetchToFile() {
       res.end(jpeg);
       return;
     }
+    if (req.url === "/redir") {
+      res.writeHead(302, { Location: "/ok.jpg" });
+      res.end();
+      return;
+    }
     res.writeHead(200);
     res.end("not-jpeg");
   });
@@ -480,11 +584,16 @@ async function testFetchToFile() {
     const got = await fetchToFile("http://127.0.0.1:" + port + "/ok.jpg", okPath, 1024, { jpeg: true });
     assert.strictEqual(got.bytes, jpeg.length);
     assert.ok(isJpeg(fs.readFileSync(okPath)));
+    const viaRedirect = path.join(root, "redir.jpg");
+    const redirected = await fetchToFile("http://127.0.0.1:" + port + "/redir", viaRedirect, 1024, { jpeg: true });
+    assert.strictEqual(redirected.bytes, jpeg.length);
     await assert.rejects(() =>
       fetchToFile("http://127.0.0.1:" + port + "/bad", path.join(root, "bad.jpg"), 1024, { jpeg: true })
     );
     assert.ok(!fs.existsSync(path.join(root, "bad.jpg")));
     assert.ok(!fs.existsSync(path.join(root, "bad.jpg.part")));
+    await assert.rejects(() => fetchToFile("http://127.0.0.1:" + port + "/ok.jpg", okPath, 0));
+    await assert.rejects(() => fetchToFile("http://127.0.0.1:" + port + "/ok.jpg", "", 1024));
   } finally {
     await closeServer(server);
     fs.rmSync(root, { recursive: true, force: true });

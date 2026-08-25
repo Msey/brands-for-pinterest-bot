@@ -48,6 +48,43 @@ function extractPosts(text) {
   return found;
 }
 
+function channelUsername(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/^@+/, "").trim().toLowerCase();
+}
+
+function isOurChannelChat(chat) {
+  if (!chat || typeof chat !== "object") return false;
+  if (channelUsername(chat.username) !== CHANNEL) return false;
+  if (chat.type && chat.type !== "channel") return false;
+  return true;
+}
+
+function postFromChannelMessageId(messageId) {
+  if (!isValidPostId(messageId)) return null;
+  return { postId: messageId, url: canonicalUrl(messageId) };
+}
+
+function extractForwardedPosts(msg) {
+  if (!msg || typeof msg !== "object") return [];
+  const found = [];
+  const seen = new Set();
+  function add(post) {
+    if (!post || seen.has(post.postId)) return;
+    seen.add(post.postId);
+    found.push(post);
+  }
+
+  const origin = msg.forward_origin;
+  if (origin && origin.type === "channel") {
+    add(isOurChannelChat(origin.chat) ? postFromChannelMessageId(origin.message_id) : null);
+  }
+  if (isOurChannelChat(msg.forward_from_chat)) {
+    add(postFromChannelMessageId(msg.forward_from_message_id));
+  }
+  return found;
+}
+
 function extractFromUrl(raw) {
   if (typeof raw !== "string" || !raw || raw.length > MAX_URL_LEN) return [];
   if (hasUnsafeChars(raw)) return [];
@@ -82,6 +119,21 @@ function sliceEntity(text, entity) {
 
 function extractFromMessage(msg) {
   if (!msg || typeof msg !== "object") return [];
+  const found = [];
+  const seen = new Set();
+
+  function pushPosts(posts) {
+    for (const post of posts) {
+      if (!post || seen.has(post.postId)) continue;
+      seen.add(post.postId);
+      found.push(post);
+      if (found.length >= MAX_POSTS_PER_MESSAGE) return true;
+    }
+    return false;
+  }
+
+  if (pushPosts(extractForwardedPosts(msg))) return found;
+
   const chunks = [];
   if (typeof msg.text === "string") chunks.push(msg.text);
   if (typeof msg.caption === "string") chunks.push(msg.caption);
@@ -97,18 +149,11 @@ function extractFromMessage(msg) {
     }
   }
 
-  const seen = new Set();
-  const found = [];
   for (const chunk of chunks) {
     const posts = typeof chunk === "string" && /^https?:\/\//i.test(chunk.trim())
       ? extractFromUrl(chunk.trim())
       : extractPosts(chunk);
-    for (const post of posts) {
-      if (seen.has(post.postId)) continue;
-      seen.add(post.postId);
-      found.push(post);
-      if (found.length >= MAX_POSTS_PER_MESSAGE) return found;
-    }
+    if (pushPosts(posts)) return found;
   }
   return found;
 }
@@ -120,6 +165,7 @@ module.exports = {
   extractFromMessage,
   extractFromUrl,
   extractPosts,
+  isOurChannelChat,
   isValidPostId,
   parsePostIdToken,
 };

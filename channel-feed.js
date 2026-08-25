@@ -1,6 +1,6 @@
 "use strict";
 
-const { CHANNEL, isValidPostId, parsePostIdToken } = require("./links");
+const { CHANNEL, isOurChannelChat, isValidPostId, parsePostIdToken } = require("./links");
 const { fetchBuffer } = require("./http-fetch");
 
 const PREVIEW_WINDOW = 100;
@@ -58,8 +58,7 @@ function pickUnusedId(ids, storage, rng, exclude) {
 
 function isOurChannelPost(msg) {
   if (!msg || !msg.chat || msg.chat.type !== "channel") return false;
-  const username = String(msg.chat.username || "").toLowerCase();
-  return username === CHANNEL;
+  return isOurChannelChat(msg.chat);
 }
 
 function postIdFromChannelPost(msg) {

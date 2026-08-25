@@ -1,6 +1,6 @@
 "use strict";
 
-const { CHANNEL, canonicalUrl, isValidPostId } = require("./links");
+const { CHANNEL, canonicalUrl, isValidPostId, parsePostIdToken } = require("./links");
 const { inferBoard } = require("./boards");
 const { inferDescription } = require("./descriptions");
 
@@ -8,6 +8,7 @@ const MAX_TITLE = 100;
 const MAX_DESC = 500;
 const MAX_URL = 2048;
 const MAX_HTML = 512 * 1024;
+const MAX_ANCHORS = 20;
 const TITLE_SUFFIX = " | оригинал из США";
 
 const SKIP_HOSTS = [
@@ -64,14 +65,21 @@ function withTitleSuffix(title) {
   return head + TITLE_SUFFIX;
 }
 
+function decodeCodePoint(value) {
+  if (!Number.isFinite(value) || value < 0 || value > 0x10ffff) return "";
+  if (value >= 0xd800 && value <= 0xdfff) return "";
+  if (value < 32 && value !== 9 && value !== 10 && value !== 13) return "";
+  return String.fromCodePoint(value);
+}
+
 function decodeEntities(text) {
   return String(text || "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(Number(num)));
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_, hex) => decodeCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d{1,7});/g, (_, num) => decodeCodePoint(Number(num)));
 }
 
 function stripTags(html) {
@@ -146,6 +154,7 @@ function extractAnchors(html) {
     const href = decodeEntities(hrefMatch[1].trim());
     const text = stripTags(match[2]);
     found.push({ href, text });
+    if (found.length >= MAX_ANCHORS) break;
   }
   return found;
 }
@@ -253,10 +262,9 @@ function parseCaptionHtml(captionHtml, options) {
 }
 
 function extractEmbedPostId(html) {
-  const match = new RegExp(`data-post="${CHANNEL}/(\\d+)"`).exec(html);
+  const match = new RegExp(`data-post="${CHANNEL}/(\\d{1,16})"`).exec(html);
   if (!match) return null;
-  const id = Number(match[1]);
-  return Number.isInteger(id) && id > 0 ? id : null;
+  return parsePostIdToken(match[1]);
 }
 
 function parseEmbedHtml(html, postId) {

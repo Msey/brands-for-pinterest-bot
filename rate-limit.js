@@ -16,12 +16,27 @@ class RateLimiter {
     }
   }
 
+  _evictOldest() {
+    let oldestKey = null;
+    let oldestReset = Infinity;
+    for (const [key, slot] of this.hits) {
+      if (slot.reset < oldestReset) {
+        oldestReset = slot.reset;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey != null) this.hits.delete(oldestKey);
+  }
+
   tooMany(userId, now) {
     if (!userId) return true;
     const ts = Number.isFinite(now) ? now : Date.now();
-    if (this.hits.size >= this.maxKeys) this.sweep(ts);
+    this.sweep(ts);
     let slot = this.hits.get(userId);
     if (!slot || ts > slot.reset) {
+      if (!this.hits.has(userId) && this.hits.size >= this.maxKeys) {
+        this._evictOldest();
+      }
       slot = { count: 0, reset: ts + this.windowMs };
       this.hits.set(userId, slot);
     }

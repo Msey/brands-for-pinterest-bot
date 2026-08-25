@@ -4,17 +4,9 @@ const fs = require("fs");
 const path = require("path");
 const { CHANNEL, extractFromUrl, parsePostIdToken } = require("./links");
 const { isTelegramCdnUrl, parseEmbedHtml } = require("./parse-post");
-const { fetchBuffer, fetchToFile, isJpeg } = require("./http-fetch");
-const {
-  PIN_DIR_MAX_AGE_MS,
-  PIN_DIR_MAX_PRUNE,
-  forgetPinsWithoutData,
-  formatPinJson,
-  hasPinData,
-  pinDir,
-  pruneOldPinDirs,
-  removePinImage,
-} = require("./pin-dirs");
+const { fetchBuffer, fetchToFile } = require("./http-fetch");
+const { formatPinJson, pinDir, removePinImage } = require("./pin-dirs");
+const { PostStorage } = require("./storage");
 
 const MAX_HTML_BYTES = 512 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -54,22 +46,11 @@ function collectPostIds(argv) {
     if (!fs.existsSync(file)) {
       throw new Error("Нет файла data/posts.jsonl");
     }
-    const text = fs.readFileSync(file, "utf8").slice(0, 8 * 1024 * 1024);
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let data;
-      try {
-        data = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const fromUrl = extractFromUrl(data && data.url);
-      for (const item of fromUrl) {
-        if (!seen.has(item.postId)) {
-          seen.add(item.postId);
-          ids.push(item.postId);
-        }
-      }
+    const storage = new PostStorage(file);
+    for (const id of storage.listIds()) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
     }
   }
   return ids;
@@ -131,16 +112,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PIN_DIR_MAX_AGE_MS,
-  PIN_DIR_MAX_PRUNE,
   collectPostIds,
   exportPost,
-  fetchBuffer,
-  fetchToFile,
-  formatPinJson,
-  forgetPinsWithoutData,
-  hasPinData,
-  isJpeg,
-  pinDir,
-  pruneOldPinDirs,
 };
